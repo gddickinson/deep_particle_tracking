@@ -1,0 +1,35 @@
+2025-05-17 18:34:59,899 - root - INFO - Logging initialized. Log file: logs/app_20250517_183459.log
+2025-05-17 18:35:07,805 - simulator.particle_generator - INFO - Created 20 random particles
+2025-05-17 18:35:07,808 - simulator.particle_generator - INFO - Applied Brownian motion to 20 particles over 10 frames
+2025-05-17 18:35:08,310 - gui.main_window - INFO - Simulation data ready for training
+2025-05-17 18:35:16,093 - training.data_loader - INFO - Simulator modules imported successfully
+2025-05-17 18:35:16,094 - training.data_loader - INFO - Simulator modules imported successfully
+2025-05-17 18:35:16,120 - training.trainer - INFO - Using device: mps
+2025-05-17 18:35:16,121 - training.trainer - INFO - Creating simple model with config: {'input_channels': 1, 'num_frames': 5, 'base_filters': 64, 'depth': 4}
+2025-05-17 18:35:16,121 - models.network - INFO - Encoder channels: [64, 128, 256, 512, 512]
+2025-05-17 18:35:16,198 - models.network - INFO - Decoder 0: in=512, out=512, skip=512
+2025-05-17 18:35:16,221 - models.network - INFO - Decoder 1: in=512, out=256, skip=256
+2025-05-17 18:35:16,228 - models.network - INFO - Decoder 2: in=256, out=128, skip=128
+2025-05-17 18:35:16,230 - models.network - INFO - Decoder 3: in=128, out=64, skip=64
+2025-05-17 18:35:16,692 - training.trainer - INFO - Model, optimizer, and loss function set up
+2025-05-17 18:35:16,693 - training.trainer - INFO - Starting training job training_20250517_183500
+2025-05-17 18:35:16,693 - training.trainer - INFO - Training job training_20250517_183500 started with task ID train_training_20250517_183500
+2025-05-17 18:35:16,693 - training.trainer - INFO - Starting training for 50 epochs
+2025-05-17 18:35:19,825 - training.trainer - INFO - [Step 0] Input frames shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:19,826 - training.trainer - INFO - [Step 0] Batch frames shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:19,826 - training.trainer - INFO - [Step 0] Batch positions shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:19,826 - training.trainer - INFO - [Step 0] Batch track_ids shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:19,828 - training.trainer - INFO - [Step 0] Target positions shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:19,831 - training.trainer - INFO - [Step 0] Target track_ids shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:19,831 - training.trainer - INFO - Model type: simple
+2025-05-17 18:35:19,831 - training.trainer - INFO - Model structure: ParticleTrackerModel
+2025-05-17 18:35:20,932 - training.trainer - INFO - [Step 0] Output shape: torch.Size([8, 1, 512, 512])
+2025-05-17 18:35:20,932 - models.losses - WARNING - Dimension mismatch between prediction (4) and target (5)
+2025-05-17 18:35:20,932 - models.losses - WARNING - Input shape torch.Size([8, 1, 1, 512, 512]) doesn't match target shape torch.Size([8, 5, 1, 512, 512]). Attempting to reshape.
+2025-05-17 18:35:47,016 - training.trainer - INFO - [Step 1] Input frames shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:47,017 - training.trainer - INFO - [Step 1] Batch frames shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:47,017 - training.trainer - INFO - [Step 1] Batch positions shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:47,017 - training.trainer - INFO - [Step 1] Batch track_ids shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:47,021 - training.trainer - INFO - [Step 1] Target positions shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:47,025 - training.trainer - INFO - [Step 1] Target track_ids shape: torch.Size([8, 5, 1, 512, 512])
+2025-05-17 18:35:57,823 - training.trainer - INFO - [Step 1] Output shape: torch.Size([8, 1, 512, 512])
