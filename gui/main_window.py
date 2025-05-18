@@ -15,6 +15,7 @@ import json
 import tifffile
 from PIL import Image
 
+import torch
 import time
 
 from PyQt5.QtWidgets import (
@@ -1136,6 +1137,45 @@ class TrainingTab(QWidget):
         self.base_filters_spin.setSingleStep(16)
         model_layout.addRow("Base Filters:", self.base_filters_spin)
 
+
+        # Transfer Learning / Pretrained Model group
+        transfer_group = QGroupBox("Transfer Learning")
+        transfer_layout = QFormLayout(transfer_group)
+
+        self.pretrained_check = QCheckBox("Use Pretrained Model")
+        self.pretrained_check.stateChanged.connect(self.update_pretrained_state)
+        transfer_layout.addRow(self.pretrained_check)
+
+        self.pretrained_path_edit = QLineEdit()
+        self.pretrained_path_edit.setReadOnly(True)
+        self.pretrained_path_edit.setEnabled(False)
+
+        pretrained_browse_button = QPushButton("Browse...")
+        pretrained_browse_button.clicked.connect(self.browse_pretrained_model)
+        pretrained_browse_button.setEnabled(False)
+        self.pretrained_browse_button = pretrained_browse_button
+
+        pretrained_path_layout = QHBoxLayout()
+        pretrained_path_layout.addWidget(self.pretrained_path_edit)
+        pretrained_path_layout.addWidget(pretrained_browse_button)
+        transfer_layout.addRow("Model Path:", pretrained_path_layout)
+
+        self.freeze_layers_check = QCheckBox("Freeze Base Layers")
+        self.freeze_layers_check.setEnabled(False)
+        transfer_layout.addRow(self.freeze_layers_check)
+
+        self.fine_tune_lr_spin = QDoubleSpinBox()
+        self.fine_tune_lr_spin.setRange(0.00001, 0.1)
+        self.fine_tune_lr_spin.setValue(0.0001)  # Default lower learning rate for fine-tuning
+        self.fine_tune_lr_spin.setDecimals(5)
+        self.fine_tune_lr_spin.setSingleStep(0.0001)
+        self.fine_tune_lr_spin.setEnabled(False)
+        transfer_layout.addRow("Fine-tuning LR:", self.fine_tune_lr_spin)
+
+        # Add the transfer learning group to the layout
+        left_layout.addWidget(transfer_group)
+
+
         # Training parameters
         training_group = QGroupBox("Training Configuration")
         training_layout = QFormLayout(training_group)
@@ -1429,6 +1469,16 @@ class TrainingTab(QWidget):
             # Add training to list
             self.add_training_to_list(training_id)
 
+            # Get pretrained model path if enabled
+            pretrained_model_path = None
+            freeze_base_layers = False
+            if self.pretrained_check.isChecked() and self.pretrained_path_edit.text():
+                pretrained_model_path = self.pretrained_path_edit.text()
+                freeze_base_layers = self.freeze_layers_check.isChecked()
+                self.status_label.setText(f"Using pretrained model: {os.path.basename(pretrained_model_path)}")
+                QApplication.processEvents()
+
+
             # Start training in background
             def training_callback(training_id, result):
                 self.train_button.setEnabled(True)
@@ -1436,14 +1486,42 @@ class TrainingTab(QWidget):
                 self.status_label.setText(f"Training {training_id} completed")
                 self.progress_bar.setValue(100)
 
-            self.training_manager.start_training(
+            # Create the trainer
+            job_checkpoint_dir = os.path.join(self.training_manager.checkpoint_dir, training_id)
+            trainer = self.training_manager.create_trainer(
                 training_id=training_id,
-                train_loader=train_loader,
-                val_loader=val_loader,
                 model_type=model_type,
                 model_config=model_config,
                 optimizer_type=optimizer_type,
                 lr=lr,
+                scheduler_type=scheduler_type
+            )
+
+            # Load pretrained model if specified
+            if pretrained_model_path:
+                success = trainer.load_weights_from_checkpoint(pretrained_model_path, strict=False)
+                if success:
+                    self.status_label.setText(f"Loaded pretrained model from {os.path.basename(pretrained_model_path)}")
+
+                    # Freeze base layers if requested
+                    if freeze_base_layers and hasattr(trainer.model, 'encoders'):
+                        for name, param in trainer.model.named_parameters():
+                            if 'encoder' in name:
+                                param.requires_grad = False
+                        self.status_label.setText(f"Loaded pretrained model and froze encoder layers")
+                else:
+                    self.status_label.setText(f"Failed to load pretrained model")
+                    self.train_button.setEnabled(True)
+                    self.stop_button.setEnabled(False)
+                    return
+                QApplication.processEvents()
+
+            # Start the training
+            self.training_manager.start_training_with_trainer(
+                trainer=trainer,
+                training_id=training_id,
+                train_loader=train_loader,
+                val_loader=val_loader,
                 epochs=epochs,
                 callback=training_callback
             )
@@ -1453,6 +1531,7 @@ class TrainingTab(QWidget):
             self.status_label.setText(f"Error: {str(e)}")
             self.train_button.setEnabled(True)
             self.stop_button.setEnabled(False)
+
 
     def stop_training(self):
         """Stop the current training process."""
@@ -1655,6 +1734,63 @@ class TrainingTab(QWidget):
         QMessageBox.information(
             self, "Load Model", f"Model for training {training_id} selected"
         )
+
+
+    def update_pretrained_state(self, state):
+        """Enable or disable pretrained model controls based on checkbox state."""
+        enabled = state == Qt.Checked
+        self.pretrained_path_edit.setEnabled(enabled)
+        self.pretrained_browse_button.setEnabled(enabled)
+        self.freeze_layers_check.setEnabled(enabled)
+        self.fine_tune_lr_spin.setEnabled(enabled)
+
+        # If enabled, adjust learning rate to suggested fine-tuning value
+        if enabled:
+            # Store original learning rate
+            if not hasattr(self, '_original_lr'):
+                self._original_lr = self.lr_spin.value()
+            self.lr_spin.setValue(self.fine_tune_lr_spin.value())
+        else:
+            # Restore original learning rate if available
+            if hasattr(self, '_original_lr'):
+                self.lr_spin.setValue(self._original_lr)
+
+    def browse_pretrained_model(self):
+        """Open file dialog to select pretrained model file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Pretrained Model",
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "checkpoints"),
+            "PyTorch Models (*.pth);;All Files (*)"
+        )
+
+        if file_path:
+            self.pretrained_path_edit.setText(file_path)
+            # Extract the model type and config from the checkpoint if possible
+            try:
+                checkpoint = torch.load(file_path, map_location=torch.device('cpu'))
+                if 'model_type' in checkpoint:
+                    model_type = checkpoint['model_type']
+                    # Set the model type in the dropdown
+                    index = self.model_type_combo.findText(model_type.title().replace('_', ' '))
+                    if index >= 0:
+                        self.model_type_combo.setCurrentIndex(index)
+
+                if 'model_config' in checkpoint and isinstance(checkpoint['model_config'], dict):
+                    config = checkpoint['model_config']
+                    # Update UI with model config
+                    if 'base_filters' in config:
+                        self.base_filters_spin.setValue(config['base_filters'])
+                    if 'depth' in config:
+                        self.model_depth_spin.setValue(config['depth'])
+
+                QMessageBox.information(
+                    self, "Pretrained Model",
+                    f"Model loaded: {os.path.basename(file_path)}\n"
+                    f"Type: {checkpoint.get('model_type', 'Unknown')}"
+                )
+            except Exception as e:
+                logger.warning(f"Could not extract model info from checkpoint: {str(e)}")
+
 
 
 class PredictionTab(QWidget):

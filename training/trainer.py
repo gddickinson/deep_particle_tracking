@@ -564,6 +564,82 @@ class Trainer:
         logger.info(f"Training history plot saved to {plot_path}")
 
 
+    def load_weights_from_checkpoint(self, checkpoint_path: str, strict: bool = False) -> bool:
+        """
+        Load only model weights from a checkpoint without loading optimizer state.
+
+        Args:
+            checkpoint_path: Path to the checkpoint file
+            strict: Whether to strictly enforce that the keys in state_dict match the model's keys
+
+        Returns:
+            Boolean indicating if loading was successful
+        """
+        if not os.path.exists(checkpoint_path):
+            logger.warning(f"Checkpoint {checkpoint_path} not found")
+            return False
+
+        try:
+            # Load checkpoint
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+
+            # Check model compatibility
+            if 'model_type' in checkpoint and checkpoint['model_type'] != self.model_type:
+                logger.warning(
+                    f"Model type mismatch: checkpoint has {checkpoint['model_type']}, "
+                    f"but current model is {self.model_type}"
+                )
+                if strict:
+                    return False
+
+            # Check model config - verify key dimensions match
+            if 'model_config' in checkpoint:
+                for key in ['input_channels', 'output_channels', 'depth']:
+                    if (key in checkpoint['model_config'] and key in self.model_config and
+                        checkpoint['model_config'][key] != self.model_config[key]):
+                        logger.warning(
+                            f"Model config mismatch for key {key}: "
+                            f"checkpoint has {checkpoint['model_config'][key]}, "
+                            f"but current config has {self.model_config[key]}"
+                        )
+                        if strict:
+                            return False
+
+            # Load model state
+            if 'model_state_dict' in checkpoint:
+                try:
+                    self.model.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+                    logger.info(f"Model weights loaded from {checkpoint_path}")
+                    return True
+                except Exception as e:
+                    logger.error(f"Error loading model weights: {str(e)}")
+                    if strict:
+                        return False
+
+                    # Try loading with a partial match (useful for transfer learning)
+                    if not strict:
+                        logger.info("Attempting to load weights with partial match...")
+                        # Get state dict from checkpoint and model
+                        state_dict = checkpoint['model_state_dict']
+                        model_dict = self.model.state_dict()
+
+                        # Filter out incompatible keys
+                        filtered_dict = {k: v for k, v in state_dict.items()
+                                         if k in model_dict and v.shape == model_dict[k].shape}
+
+                        # Load filtered state dict
+                        model_dict.update(filtered_dict)
+                        self.model.load_state_dict(model_dict)
+
+                        logger.info(f"Loaded {len(filtered_dict)}/{len(state_dict)} layers from checkpoint")
+                        return len(filtered_dict) > 0
+            else:
+                logger.warning(f"No model state dictionary found in {checkpoint_path}")
+                return False
+        except Exception as e:
+            logger.error(f"Error loading checkpoint: {str(e)}")
+            return False
+
 class TrainingManager:
     """Manager for training jobs with thread management."""
 
@@ -616,69 +692,26 @@ class TrainingManager:
         Returns:
             Task ID of the training job
         """
-        # Create checkpoint and log directories for this training job
-        job_checkpoint_dir = os.path.join(self.checkpoint_dir, training_id)
-        job_log_dir = os.path.join(self.log_dir, training_id)
-
-        os.makedirs(job_checkpoint_dir, exist_ok=True)
-        os.makedirs(job_log_dir, exist_ok=True)
-
         # Create trainer
-        trainer = Trainer(
+        trainer = self.create_trainer(
+            training_id=training_id,
             model_type=model_type,
             model_config=model_config,
             optimizer_type=optimizer_type,
             lr=lr,
-            checkpoint_dir=job_checkpoint_dir,
-            log_every=10,
-            save_every=1
+            scheduler_type='plateau'
         )
 
-        # Initialize model and optimizer
-        trainer.setup()
-
-        # Store trainer
-        self.trainers[training_id] = trainer
-        self.current_training_id = training_id
-
-        # Define training function
-        def train_job():
-            try:
-                logger.info(f"Starting training job {training_id}")
-
-                # Train the model
-                result = trainer.train(
-                    train_loader=train_loader,
-                    val_loader=val_loader,
-                    epochs=epochs,
-                    resume=resume,
-                    log_dir=job_log_dir
-                )
-
-                # Store result
-                self.training_results[training_id] = result
-
-                logger.info(f"Training job {training_id} completed")
-
-                # Call callback if provided
-                if callback:
-                    callback(training_id, result)
-
-                return result
-
-            except Exception as e:
-                logger.error(f"Error in training job {training_id}: {str(e)}")
-                raise e
-
-        # Start training in a background thread
-        task_id = thread_manager.submit_task(
-            task_id=f"train_{training_id}",
-            func=train_job
+        # Start training with the trainer
+        return self.start_training_with_trainer(
+            trainer=trainer,
+            training_id=training_id,
+            train_loader=train_loader,
+            val_loader=val_loader,
+            epochs=epochs,
+            resume=resume,
+            callback=callback
         )
-
-        logger.info(f"Training job {training_id} started with task ID {task_id}")
-
-        return task_id
 
     def stop_training(self, training_id: str) -> bool:
         """
@@ -794,3 +827,114 @@ class TrainingManager:
         self.trainers.clear()
         self.training_results.clear()
         self.current_training_id = None
+
+    def start_training_with_trainer(self,
+                                  trainer: Trainer,
+                                  training_id: str,
+                                  train_loader: DataLoader,
+                                  val_loader: DataLoader,
+                                  epochs: int = 50,
+                                  resume: bool = False,
+                                  callback: Optional[Callable] = None) -> str:
+        """
+        Start a training job in a background thread using an existing trainer.
+
+        Args:
+            trainer: Existing trainer instance
+            training_id: Unique ID for the training job
+            train_loader: Training data loader
+            val_loader: Validation data loader
+            epochs: Number of epochs
+            resume: Whether to resume from checkpoint
+            callback: Callback function to call after training
+
+        Returns:
+            Task ID of the training job
+        """
+        # Store trainer
+        self.trainers[training_id] = trainer
+        self.current_training_id = training_id
+
+        # Define training function
+        def train_job():
+            try:
+                logger.info(f"Starting training job {training_id}")
+
+                # Train the model
+                result = trainer.train(
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                    epochs=epochs,
+                    resume=resume,
+                    log_dir=os.path.join(self.log_dir, training_id)
+                )
+
+                # Store result
+                self.training_results[training_id] = result
+
+                logger.info(f"Training job {training_id} completed")
+
+                # Call callback if provided
+                if callback:
+                    callback(training_id, result)
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Error in training job {training_id}: {str(e)}")
+                raise e
+
+        # Start training in a background thread
+        task_id = thread_manager.submit_task(
+            task_id=f"train_{training_id}",
+            func=train_job
+        )
+
+        logger.info(f"Training job {training_id} started with task ID {task_id}")
+
+        return task_id
+
+    def create_trainer(self,
+                     training_id: str,
+                     model_type: str,
+                     model_config: Dict,
+                     optimizer_type: str = 'adam',
+                     lr: float = 0.001,
+                     scheduler_type: Optional[str] = 'plateau') -> Trainer:
+        """
+        Create a trainer instance without starting training.
+
+        Args:
+            training_id: Unique ID for the training job
+            model_type: Type of model to train
+            model_config: Model configuration
+            optimizer_type: Type of optimizer
+            lr: Learning rate
+            scheduler_type: Type of learning rate scheduler
+
+        Returns:
+            Trainer instance
+        """
+        # Create checkpoint and log directories for this training job
+        job_checkpoint_dir = os.path.join(self.checkpoint_dir, training_id)
+        job_log_dir = os.path.join(self.log_dir, training_id)
+
+        os.makedirs(job_checkpoint_dir, exist_ok=True)
+        os.makedirs(job_log_dir, exist_ok=True)
+
+        # Create trainer
+        trainer = Trainer(
+            model_type=model_type,
+            model_config=model_config,
+            optimizer_type=optimizer_type,
+            lr=lr,
+            scheduler_type=scheduler_type,
+            checkpoint_dir=job_checkpoint_dir,
+            log_every=10,
+            save_every=1
+        )
+
+        # Initialize model and optimizer
+        trainer.setup()
+
+        return trainer
