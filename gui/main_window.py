@@ -1471,7 +1471,7 @@ class TrainingTab(QWidget):
         self.status_label.setText(f"Training {training_id} stopped")
 
     def update_training_progress(self):
-        """Update the training progress display."""
+        """Update the training progress display with robust error handling."""
         # Get training ID
         training_id = self.training_id_edit.text()
 
@@ -1495,29 +1495,48 @@ class TrainingTab(QWidget):
                 self.status_label.setText(f"Training {training_id}: Epoch {current_epoch}/{epochs}")
 
                 # Update plot
-                history = status['history']
+                try:
+                    history = status['history']
 
-                if 'train_loss' in history and 'val_loss' in history:
-                    train_loss = history['train_loss']
-                    val_loss = history['val_loss']
+                    if 'train_loss' in history and history['train_loss']:
+                        train_loss = history['train_loss']
 
-                    # Clear axis
-                    self.ax.clear()
+                        # Clear axis
+                        self.ax.clear()
 
-                    # Plot losses
-                    epochs_range = range(1, len(train_loss) + 1)
-                    self.ax.plot(epochs_range, train_loss, 'b-', label='Train Loss')
-                    self.ax.plot(epochs_range, val_loss, 'r-', label='Validation Loss')
+                        # Plot training loss
+                        epochs_range = range(1, len(train_loss) + 1)
+                        self.ax.plot(epochs_range, train_loss, 'b-', label='Train Loss')
 
-                    # Set title and labels
-                    self.ax.set_title("Training Metrics")
-                    self.ax.set_xlabel("Epoch")
-                    self.ax.set_ylabel("Loss")
-                    self.ax.legend()
-                    self.ax.grid(True)
+                        # Plot validation loss only if it exists and has data
+                        if 'val_loss' in history and history['val_loss'] and len(history['val_loss']) > 0:
+                            val_loss = history['val_loss']
 
-                    # Update canvas
-                    self.canvas.draw()
+                            # Create appropriate validation x-axis points
+                            if len(val_loss) == len(train_loss):
+                                # Same frequency - use same x values
+                                val_epochs = epochs_range
+                            else:
+                                # Different frequency - create appropriate scale
+                                # This assumes validation happens at regular intervals
+                                val_epochs = np.linspace(1, len(train_loss), len(val_loss))
+
+                            self.ax.plot(val_epochs, val_loss, 'r-', label='Validation Loss')
+
+                        # Set title and labels
+                        self.ax.set_title("Training Metrics")
+                        self.ax.set_xlabel("Epoch")
+                        self.ax.set_ylabel("Loss")
+                        self.ax.legend()
+                        self.ax.grid(True)
+
+                        # Update canvas
+                        self.canvas.draw()
+                except Exception as e:
+                    # Handle plotting errors gracefully
+                    logger.error(f"Error updating training plot: {str(e)}")
+                    # Don't let plotting errors crash the progress update
+                    pass
 
         # Refresh trainings list
         self.refresh_trainings()
@@ -1579,29 +1598,43 @@ class TrainingTab(QWidget):
 
         # Update plot if history available
         if 'history' in status:
-            history = status['history']
+            try:
+                history = status['history']
 
-            if 'train_loss' in history and 'val_loss' in history:
-                train_loss = history['train_loss']
-                val_loss = history['val_loss']
+                if 'train_loss' in history and len(history['train_loss']) > 0:
+                    train_loss = history['train_loss']
 
-                # Clear axis
-                self.ax.clear()
+                    # Clear axis
+                    self.ax.clear()
 
-                # Plot losses
-                epochs_range = range(1, len(train_loss) + 1)
-                self.ax.plot(epochs_range, train_loss, 'b-', label='Train Loss')
-                self.ax.plot(epochs_range, val_loss, 'r-', label='Validation Loss')
+                    # Plot training loss
+                    epochs_range = range(1, len(train_loss) + 1)
+                    self.ax.plot(epochs_range, train_loss, 'b-', label='Train Loss')
 
-                # Set title and labels
-                self.ax.set_title(f"Training Metrics - {training_id}")
-                self.ax.set_xlabel("Epoch")
-                self.ax.set_ylabel("Loss")
-                self.ax.legend()
-                self.ax.grid(True)
+                    # Plot validation loss only if it exists and has data
+                    if 'val_loss' in history and len(history['val_loss']) > 0:
+                        val_loss = history['val_loss']
 
-                # Update canvas
-                self.canvas.draw()
+                        # Make sure lengths match
+                        if len(val_loss) == len(epochs_range):
+                            self.ax.plot(epochs_range, val_loss, 'r-', label='Validation Loss')
+                        else:
+                            # Create appropriate validation x-axis points
+                            val_epochs = range(1, len(val_loss) + 1)
+                            self.ax.plot(val_epochs, val_loss, 'r-', label='Validation Loss')
+
+                    # Set title and labels
+                    self.ax.set_title(f"Training Metrics - {training_id}")
+                    self.ax.set_xlabel("Epoch")
+                    self.ax.set_ylabel("Loss")
+                    self.ax.legend()
+                    self.ax.grid(True)
+
+                    # Update canvas
+                    self.canvas.draw()
+            except Exception as e:
+                # Gracefully handle plotting errors
+                logger.error(f"Error plotting training history: {str(e)}")
 
     def load_selected_model(self):
         """Load the selected model for prediction."""
