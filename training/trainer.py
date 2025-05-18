@@ -15,6 +15,8 @@ from typing import Dict, List, Optional, Tuple, Union, Callable
 import matplotlib.pyplot as plt
 from datetime import datetime
 
+from PyQt5.QtCore import QObject, pyqtSignal
+
 from models.network import create_model, ParticleTrackerModel
 from models.losses import CombinedLoss
 from utils.device_manager import device_manager
@@ -529,39 +531,49 @@ class Trainer:
         Args:
             log_dir: Directory to save plots
         """
-        plt.figure(figsize=(12, 5))
+        # Set a non-interactive backend before creating any figures
+        # This makes matplotlib thread-safe for saving figures
+        import matplotlib
+        orig_backend = matplotlib.get_backend()
+        matplotlib.use('Agg')  # Use the non-interactive Agg backend
 
-        # Plot training and validation loss
-        plt.subplot(1, 2, 1)
-        plt.plot(self.history['train_loss'], label='Train')
-        plt.plot(self.history['val_loss'], label='Validation')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title('Training and Validation Loss')
-        plt.legend()
-        plt.grid(True)
+        try:
+            plt.figure(figsize=(12, 5))
 
-        # Plot learning rate if available
-        if self.scheduler is not None:
-            plt.subplot(1, 2, 2)
-            lrs = []
-            for param_group in self.optimizer.param_groups:
-                lrs.append(param_group['lr'])
-            plt.plot(lrs)
+            # Plot training and validation loss
+            plt.subplot(1, 2, 1)
+            plt.plot(self.history['train_loss'], label='Train')
+            plt.plot(self.history['val_loss'], label='Validation')
             plt.xlabel('Epoch')
-            plt.ylabel('Learning Rate')
-            plt.title('Learning Rate')
+            plt.ylabel('Loss')
+            plt.title('Training and Validation Loss')
+            plt.legend()
             plt.grid(True)
 
-        plt.tight_layout()
+            # Plot learning rate if available
+            if self.scheduler is not None:
+                plt.subplot(1, 2, 2)
+                lrs = []
+                for param_group in self.optimizer.param_groups:
+                    lrs.append(param_group['lr'])
+                plt.plot(lrs)
+                plt.xlabel('Epoch')
+                plt.ylabel('Learning Rate')
+                plt.title('Learning Rate')
+                plt.grid(True)
 
-        # Save plot
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        plot_path = os.path.join(log_dir, f'training_history_{timestamp}.png')
-        plt.savefig(plot_path)
-        plt.close()
+            plt.tight_layout()
 
-        logger.info(f"Training history plot saved to {plot_path}")
+            # Save plot
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            plot_path = os.path.join(log_dir, f'training_history_{timestamp}.png')
+            plt.savefig(plot_path)
+            plt.close('all')  # Close all figures to free memory
+
+            logger.info(f"Training history plot saved to {plot_path}")
+        finally:
+            # Restore the original backend
+            matplotlib.use(orig_backend)
 
 
     def load_weights_from_checkpoint(self, checkpoint_path: str, strict: bool = False) -> bool:
@@ -643,6 +655,9 @@ class Trainer:
 class TrainingManager:
     """Manager for training jobs with thread management."""
 
+    # Add a signal that will be emitted when training completes
+    training_completed = pyqtSignal(str, dict)  # training_id, results
+
     def __init__(self, checkpoint_dir: str = 'checkpoints', log_dir: str = 'logs'):
         """
         Initialize the training manager.
@@ -651,6 +666,7 @@ class TrainingManager:
             checkpoint_dir: Directory to save checkpoints
             log_dir: Directory to save logs
         """
+        super().__init__()  # Initialize QObject
         self.checkpoint_dir = checkpoint_dir
         self.log_dir = log_dir
 
@@ -851,9 +867,14 @@ class TrainingManager:
         Returns:
             Task ID of the training job
         """
+        # Store callback for later use
+        if callback:
+            self.callbacks[training_id] = callback
+
         # Store trainer
         self.trainers[training_id] = trainer
         self.current_training_id = training_id
+
 
         # Define training function
         def train_job():
@@ -874,9 +895,8 @@ class TrainingManager:
 
                 logger.info(f"Training job {training_id} completed")
 
-                # Call callback if provided
-                if callback:
-                    callback(training_id, result)
+                # Emit signal instead of directly calling callback
+                self.training_completed.emit(training_id, result)
 
                 return result
 

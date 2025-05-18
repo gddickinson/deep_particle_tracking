@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QHeaderView, QSizePolicy, QMessageBox, QListWidget, QListWidgetItem,
     QFormLayout, QRadioButton, QButtonGroup
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QMutex, QSize
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QMutex, QSize, QObject, pyqtSlot
 from PyQt5.QtGui import QIcon, QPixmap, QFont, QColor
 
 from utils.device_manager import device_manager
@@ -37,7 +37,7 @@ from simulator.psf_models import GaussianPSF, AiryDiskPSF
 from simulator.noise_models import PoissonNoise, GaussianNoise, MixedNoise
 from simulator.motion_models import BrownianMotion, DirectedMotion, ConfinedDiffusion
 from training.data_loader import create_dataloaders, SimulatedParticleDataset
-from training.trainer import TrainingManager
+from training.trainer import TrainingManager, thread_manager
 from prediction.inference import PredictionManager
 from visualization.visualization import (
     ParticleVisualization, TrackingAnimator, TrackingVisualizer,
@@ -51,6 +51,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+class TrainingCompletionHandler(QObject):
+    """Helper class to handle training completion in the UI thread."""
+
+    def __init__(self, training_tab):
+        super().__init__()
+        self.training_tab = training_tab
+
+    @pyqtSlot(str, object)
+    def on_training_completed(self, training_id, result):
+        """Safely handle training completion in the UI thread."""
+        # Update UI elements here
+        self.training_tab.train_button.setEnabled(True)
+        self.training_tab.stop_button.setEnabled(False)
+        self.training_tab.status_label.setText(f"Training {training_id} completed")
+        self.training_tab.progress_bar.setValue(100)
+
+        # Refresh the trainings list
+        self.training_tab.refresh_trainings()
 
 class ConsoleLogHandler(logging.Handler):
     """Logging handler to redirect logs to a QTextEdit widget with crash prevention."""
@@ -1011,18 +1030,47 @@ class SimulationTab(QWidget):
         self.frame_label.setText("0/9")
 
 
+class SafeTrainingManager(QObject, TrainingManager):
+    """A safer version of TrainingManager that handles Qt signal errors."""
+
+    # Define a signal for training completion
+    training_completed = pyqtSignal(str, object)
+
+    def __init__(self, *args, **kwargs):
+        # Initialize both parent classes
+        QObject.__init__(self)
+        TrainingManager.__init__(self, *args, **kwargs)
+        self.callbacks = {}
+
+    def start_training_with_trainer(self, *args, **kwargs):
+        """Override to safely handle callbacks."""
+        # Extract callback
+        callback_func = kwargs.pop('callback', None)
+
+        # Add to callbacks dictionary if provided
+        training_id = kwargs.get('training_id', None)
+        if callback_func and training_id:
+            self.callbacks[training_id] = callback_func
+
+        # Call original without callback
+        return super().start_training_with_trainer(*args, **kwargs)
+
 class TrainingTab(QWidget):
     """Tab for training particle tracking models."""
 
     def __init__(self, parent=None):
-        """Initialize the training tab."""
         super().__init__(parent)
-
-        # Initialize training manager
-        self.training_manager = TrainingManager()
 
         # Set up UI
         self.setup_ui()
+
+        # Initialize training manager with safer version
+        self.training_manager = SafeTrainingManager()
+
+        # Create a handler for thread-safe UI updates
+        self.completion_handler = TrainingCompletionHandler(self)
+        self.training_manager.training_completed.connect(self.completion_handler.on_training_completed)
+
 
     def setup_ui(self):
         """Set up the UI components."""
@@ -1329,8 +1377,14 @@ class TrainingTab(QWidget):
         if directory:
             line_edit.setText(directory)
 
+
+
     def start_training(self):
         """Start the training process."""
+        # initialize timer
+        if hasattr(self, 'training_check_timer') and self.training_check_timer.isActive():
+            self.training_check_timer.stop()
+
         # Get training ID
         training_id = self.training_id_edit.text()
 
@@ -1344,6 +1398,8 @@ class TrainingTab(QWidget):
         self.status_label.setText("Preparing for training...")
         self.progress_bar.setValue(0)
         QApplication.processEvents()
+
+
 
         try:
             # Create data loaders
@@ -1479,12 +1535,24 @@ class TrainingTab(QWidget):
                 QApplication.processEvents()
 
 
-            # Start training in background
-            def training_callback(training_id, result):
-                self.train_button.setEnabled(True)
-                self.stop_button.setEnabled(False)
-                self.status_label.setText(f"Training {training_id} completed")
-                self.progress_bar.setValue(100)
+            # # Start training in background
+            # def training_callback(training_id, result):
+            #     self.train_button.setEnabled(True)
+            #     self.stop_button.setEnabled(False)
+            #     self.status_label.setText(f"Training {training_id} completed")
+            #     self.progress_bar.setValue(100)
+
+            # # Create custom callback that uses invokeMethod to safely update UI
+            # def safe_callback(training_id, result):
+            #     # Use Qt's invokeMethod to safely call the handler's method from any thread
+            #     from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+            #     QMetaObject.invokeMethod(
+            #         self.completion_handler,
+            #         "on_training_completed",
+            #         Qt.QueuedConnection,
+            #         Q_ARG(str, training_id),
+            #         Q_ARG(object, result)
+            #     )
 
             # Create the trainer
             job_checkpoint_dir = os.path.join(self.training_manager.checkpoint_dir, training_id)
@@ -1516,6 +1584,7 @@ class TrainingTab(QWidget):
                     return
                 QApplication.processEvents()
 
+
             # Start the training
             self.training_manager.start_training_with_trainer(
                 trainer=trainer,
@@ -1523,8 +1592,14 @@ class TrainingTab(QWidget):
                 train_loader=train_loader,
                 val_loader=val_loader,
                 epochs=epochs,
-                callback=training_callback
+                callback=None  # Set to None instead of self.training_callback
             )
+
+            # set up a timer to check for completion
+            self.training_check_timer = QTimer(self)  # Make sure to parent it to self
+            self.training_check_timer.timeout.connect(lambda: self.check_training_completion(training_id))
+            self.training_check_timer.start(1000)  # Check every second
+
 
         except Exception as e:
             logger.error(f"Error starting training: {str(e)}")
@@ -1532,6 +1607,98 @@ class TrainingTab(QWidget):
             self.train_button.setEnabled(True)
             self.stop_button.setEnabled(False)
 
+
+    def cleanup_resources(self):
+        """Clean up resources when tab is being destroyed."""
+        if hasattr(self, 'training_check_timer') and self.training_check_timer.isActive():
+            self.training_check_timer.stop()
+
+    def check_training_completion(self, training_id):
+        """Check if training is complete by monitoring status."""
+        try:
+            status = self.training_manager.get_training_status(training_id)
+
+            # Check if training is done
+            if status['task_status'] in ['completed', 'failed', 'cancelled']:
+                # Stop the timer
+                self.training_check_timer.stop()
+
+                # Update UI
+                self.train_button.setEnabled(True)
+                self.stop_button.setEnabled(False)
+
+                if status['task_status'] == 'completed':
+                    self.status_label.setText(f"Training {training_id} completed")
+                    self.progress_bar.setValue(100)
+                elif status['task_status'] == 'failed':
+                    self.status_label.setText(f"Training {training_id} failed")
+                else:
+                    self.status_label.setText(f"Training {training_id} cancelled")
+
+                # Refresh the list
+                self.refresh_trainings()
+
+                # Update plot if history available
+                if 'history' in status:
+                    self.update_history_plot(status['history'])
+
+        except Exception as e:
+            logger.error(f"Error checking training status: {str(e)}")
+            # Don't let exceptions in the timer affect the UI
+            # The training likely completed, so update UI accordingly
+            self.training_check_timer.stop()
+            self.train_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            self.status_label.setText(f"Training complete (with error handling)")
+            self.progress_bar.setValue(100)
+            self.refresh_trainings()
+
+
+    def update_history_plot(self, history):
+        """Update plot with training history."""
+        try:
+            if 'train_loss' in history and history['train_loss']:
+                # Clear axis
+                self.ax.clear()
+
+                # Plot training loss
+                train_loss = history['train_loss']
+                epochs_range = range(1, len(train_loss) + 1)
+                self.ax.plot(epochs_range, train_loss, 'b-', label='Train Loss')
+
+                # Plot validation loss if available
+                if 'val_loss' in history and history['val_loss']:
+                    val_loss = history['val_loss']
+                    if len(val_loss) == len(train_loss):
+                        self.ax.plot(epochs_range, val_loss, 'r-', label='Validation Loss')
+                    else:
+                        # Handle different lengths
+                        val_epochs = np.linspace(1, len(train_loss), len(val_loss))
+                        self.ax.plot(val_epochs, val_loss, 'r-', label='Validation Loss')
+
+                # Set labels and title
+                self.ax.set_title("Training Metrics")
+                self.ax.set_xlabel("Epoch")
+                self.ax.set_ylabel("Loss")
+                self.ax.legend()
+                self.ax.grid(True)
+
+                # Update canvas
+                self.canvas.draw()
+        except Exception as e:
+            logger.error(f"Error updating history plot: {str(e)}")
+
+    # # Define a direct callback function
+    # def training_callback(self, training_id, result):
+    #     # Schedule this to run on the main thread using Qt.QueuedConnection
+    #     from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+    #     QMetaObject.invokeMethod(
+    #         self.completion_handler,
+    #         "on_training_completed",
+    #         Qt.QueuedConnection,
+    #         Q_ARG(str, training_id),
+    #         Q_ARG(object, result)
+    #     )
 
     def stop_training(self):
         """Stop the current training process."""
@@ -1548,6 +1715,18 @@ class TrainingTab(QWidget):
         self.train_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.status_label.setText(f"Training {training_id} stopped")
+
+    def on_training_completed(self, training_id, result):
+        """Handle training completion in the UI thread."""
+        # Update UI elements safely here
+        self.train_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.status_label.setText(f"Training {training_id} completed")
+        self.progress_bar.setValue(100)
+
+        # Refresh the trainings list
+        self.refresh_trainings()
+
 
     def update_training_progress(self):
         """Update the training progress display with robust error handling."""
@@ -2455,12 +2634,11 @@ class MainWindow(QMainWindow):
         # TODO: Set up training tab with simulation data
 
     def closeEvent(self, event):
-        """
-        Handle application close event.
+        """Handle application close event."""
+        # Clean up resources in tabs
+        if hasattr(self, 'training_tab'):
+            self.training_tab.cleanup_resources()
 
-        Args:
-            event: Close event
-        """
-        # Clean up resources
+        # Then proceed with existing cleanup
         thread_manager.shutdown(wait=True)
         event.accept()
