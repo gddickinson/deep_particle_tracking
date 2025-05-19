@@ -567,120 +567,237 @@ class CombinedLoss(nn.Module):
         self.lambda_loc = lambda_loc
         self.lambda_track = lambda_track
 
-    def forward(self,
-                outputs: Dict[str, torch.Tensor],
+    def forward(self, outputs: Union[torch.Tensor, Dict[str, torch.Tensor]],
                 targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
-        Forward pass with reduced warnings.
+        Forward pass with improved dimension handling.
 
         Args:
-            outputs: Dictionary of model outputs
+            outputs: Model output (tensor or dictionary)
             targets: Dictionary of target values
 
         Returns:
             Dictionary of loss components and total loss
         """
         losses = {}
-        device = None
+        device = next(iter(targets.values())).device
 
-        # Get the device from the first available tensor
-        if isinstance(outputs, dict) and len(outputs) > 0:
-            device = next(iter(outputs.values())).device
-        elif not isinstance(outputs, dict) and isinstance(outputs, torch.Tensor):
-            device = outputs.device
-        elif isinstance(targets, dict) and len(targets) > 0:
-            device = next(iter(targets.values())).device
-        else:
-            device = torch.device('cpu')
-
-        # Handle localization loss
-        if isinstance(outputs, dict) and 'positions' in outputs and 'positions' in targets:
+        # Extract position prediction based on output type
+        if isinstance(outputs, dict) and 'positions' in outputs:
             pred_pos = outputs['positions']
-            target_pos = targets['positions']
-
-            # Handle dimension mismatch - especially frame count mismatch
-            if pred_pos.dim() != target_pos.dim():
-                warning_key = f"dim_{pred_pos.dim()}_{target_pos.dim()}"
-                if warning_key not in CombinedLoss._shown_warnings:
-                    CombinedLoss._shown_warnings.add(warning_key)
-                    logger.warning(f"Dimension mismatch between prediction ({pred_pos.dim()}) and target ({target_pos.dim()})")
-
-                # If pred is (B, C, H, W) and target is (B, F, C, H, W)
-                if pred_pos.dim() == 4 and target_pos.dim() == 5:
-                    # Add frame dimension to prediction
-                    pred_pos = pred_pos.unsqueeze(1)
-                # If pred is (B, F, C, H, W) and target is (B, C, H, W)
-                elif pred_pos.dim() == 5 and target_pos.dim() == 4:
-                    # Take only the first frame of prediction
-                    pred_pos = pred_pos[:, 0]
-
-            # Handle frame count mismatch
-            if pred_pos.dim() == 5 and target_pos.dim() == 5 and pred_pos.size(1) != target_pos.size(1):
-                warning_key = f"frame_{pred_pos.size(1)}_{target_pos.size(1)}"
-                if warning_key not in CombinedLoss._shown_warnings:
-                    CombinedLoss._shown_warnings.add(warning_key)
-                    logger.warning(f"Frame count mismatch: prediction has {pred_pos.size(1)} frames, target has {target_pos.size(1)} frames")
-
-                # If prediction has fewer frames than target
-                if pred_pos.size(1) < target_pos.size(1):
-                    # Use only the first pred_pos.size(1) frames from target
-                    target_pos = target_pos[:, :pred_pos.size(1)]
-                else:
-                    # Use only the first target_pos.size(1) frames from prediction
-                    pred_pos = pred_pos[:, :target_pos.size(1)]
-
-            # Handle different shapes (single frame vs multiple frames)
-            if len(pred_pos.shape) == 4:  # (B, 1, H, W)
-                pos_loss = self.loc_loss(pred_pos, target_pos)
-            else:  # (B, F, 1, H, W)
-                b, f, c, h, w = pred_pos.shape
-
-                # Reshape for batch processing
-                pos_loss = self.loc_loss(
-                    pred_pos.reshape(b*f, c, h, w),
-                    target_pos.reshape(b*f, c, h, w)
-                )
-
-            losses['loc_loss'] = pos_loss
-        elif not isinstance(outputs, dict) and 'positions' in targets:
-            # Direct outputs as position predictions
-            pred_pos = outputs
-            target_pos = targets['positions']
-
-            # Handle dimension and shape differences
-            if pred_pos.dim() != target_pos.dim():
-                warning_key = f"direct_dim_{pred_pos.dim()}_{target_pos.dim()}"
-                if warning_key not in CombinedLoss._shown_warnings:
-                    CombinedLoss._shown_warnings.add(warning_key)
-                    logger.warning(f"Dimension mismatch between prediction ({pred_pos.dim()}) and target ({target_pos.dim()})")
-
-                # Try to make dimensions match
-                if pred_pos.dim() < target_pos.dim():
-                    # Add missing dimensions to prediction
-                    while pred_pos.dim() < target_pos.dim():
-                        pred_pos = pred_pos.unsqueeze(1)
-                else:
-                    # Remove extra dimensions from prediction
-                    while pred_pos.dim() > target_pos.dim() and pred_pos.size(0) == 1:
-                        pred_pos = pred_pos.squeeze(0)
-
-            pos_loss = self.loc_loss(pred_pos, target_pos)
-            losses['loc_loss'] = pos_loss
         else:
-            losses['loc_loss'] = torch.tensor(0.0, requires_grad=True, device=device)
+            # Output is directly the position prediction
+            pred_pos = outputs
 
-        # Handle tracking loss if available
-        if isinstance(outputs, dict) and 'embeddings' in outputs and 'track_ids' in targets:
+        # Get target positions
+        target_pos = targets.get('positions')
+
+        if target_pos is None:
+            return {'loc_loss': torch.tensor(0.0, device=device),
+                    'total': torch.tensor(0.0, device=device)}
+
+        # Handle dimension mismatch - the core issue in our case
+        # If pred_pos is (batch, channels, height, width) and target_pos is (batch, frames, channels, height, width)
+        if pred_pos.dim() == 4 and target_pos.dim() == 5:
+            # Add frame dimension to prediction
+            pred_pos = pred_pos.unsqueeze(1)
+            # Use only first frame for simplicity in this fix
+            if self.lambda_track == 0.0:  # If tracking loss is disabled
+                target_pos = target_pos[:, 0:1]  # Use only first frame
+
+        # If pred_pos is (batch, frames, channels, height, width) but frame count differs
+        if pred_pos.dim() == 5 and target_pos.dim() == 5 and pred_pos.size(1) != target_pos.size(1):
+            # Adjust frame count
+            if pred_pos.size(1) < target_pos.size(1):
+                # Use only available frames from target
+                target_pos = target_pos[:, :pred_pos.size(1)]
+            else:
+                # Use only available frames from prediction
+                pred_pos = pred_pos[:, :target_pos.size(1)]
+
+        # Calculate localization loss
+        pos_loss = self.loc_loss(pred_pos, target_pos)
+        losses['loc_loss'] = pos_loss
+
+        # Calculate tracking loss if available
+        track_loss = torch.tensor(0.0, device=device)
+        if self.lambda_track > 0.0 and isinstance(outputs, dict) and 'embeddings' in outputs and 'track_ids' in targets:
             embeddings = outputs['embeddings']
             track_ids = targets['track_ids']
             masks = targets.get('masks', None)
 
+            # Ensure embeddings have correct dimensions if needed
+            if embeddings.dim() == 4 and track_ids.dim() == 5:
+                # Embeddings lack frame dimension - expand first
+                embeddings = embeddings.unsqueeze(1)
+                # Only use one frame since we don't have embedding sequence
+                track_ids = track_ids[:, 0:1]
+
+            # If embeddings and track_ids have different frame counts
+            if embeddings.dim() == 5 and track_ids.dim() == 5 and embeddings.size(1) != track_ids.size(1):
+                # Adjust frame count
+                if embeddings.size(1) < track_ids.size(1):
+                    track_ids = track_ids[:, :embeddings.size(1)]
+                else:
+                    embeddings = embeddings[:, :track_ids.size(1)]
+
             track_loss = self.track_loss(embeddings, track_ids, masks)
             losses['track_loss'] = track_loss
         else:
-            losses['track_loss'] = torch.tensor(0.0, requires_grad=True, device=device)
+            losses['track_loss'] = track_loss
 
         # Compute total loss
         losses['total'] = self.lambda_loc * losses['loc_loss'] + self.lambda_track * losses['track_loss']
 
         return losses
+
+class TemporalEmbeddingLoss(nn.Module):
+    """
+    Loss for enforcing temporal consistency in embeddings.
+    This helps tracking particles by ensuring same particles have similar embeddings across frames.
+    """
+
+    def __init__(self, margin: float = 1.0):
+        """
+        Initialize the temporal embedding loss.
+
+        Args:
+            margin: Margin for contrastive loss
+        """
+        super().__init__()
+        self.margin = margin
+
+    def forward(self, embeddings: torch.Tensor, track_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+
+        Args:
+            embeddings: Predicted embeddings (B, F, C, H, W) or (B, C, H, W)
+            track_ids: Ground truth track IDs (B, F, 1, H, W), 0 indicates background
+
+        Returns:
+            Loss value
+        """
+        # Ensure embeddings have temporal dimension
+        if embeddings.dim() == 4:  # (B, C, H, W)
+            return torch.tensor(0.0, device=embeddings.device)
+
+        batch_size, num_frames, embed_channels, height, width = embeddings.shape
+
+        # Extract embeddings at particle positions
+        total_loss = 0.0
+        valid_pairs = 0
+
+        for b in range(batch_size):
+            for f1 in range(num_frames-1):
+                f2 = f1 + 1  # Compare with next frame
+
+                # Get track IDs for each frame
+                ids1 = track_ids[b, f1, 0]  # (H, W)
+                ids2 = track_ids[b, f2, 0]  # (H, W)
+
+                # Get embeddings for each frame
+                emb1 = embeddings[b, f1]  # (C, H, W)
+                emb2 = embeddings[b, f2]  # (C, H, W)
+
+                # Get unique IDs in both frames (excluding background)
+                unique_ids1 = torch.unique(ids1)
+                unique_ids1 = unique_ids1[unique_ids1 > 0]
+
+                unique_ids2 = torch.unique(ids2)
+                unique_ids2 = unique_ids2[unique_ids2 > 0]
+
+                # Find common IDs
+                common_ids = []
+                for id1 in unique_ids1:
+                    if id1 in unique_ids2:
+                        common_ids.append(id1.item())
+
+                # Compute loss for matching pairs
+                for track_id in common_ids:
+                    # Find positions for this ID in each frame
+                    mask1 = (ids1 == track_id)
+                    mask2 = (ids2 == track_id)
+
+                    if not torch.any(mask1) or not torch.any(mask2):
+                        continue
+
+                    # Get embedding for this ID in each frame
+                    # For simplicity, use average of all pixels with this ID
+                    emb1_avg = torch.mean(emb1[:, mask1], dim=1)  # (C,)
+                    emb2_avg = torch.mean(emb2[:, mask2], dim=1)  # (C,)
+
+                    # Compute L2 distance
+                    dist = torch.sum((emb1_avg - emb2_avg) ** 2)
+
+                    # Add to loss
+                    total_loss += dist
+                    valid_pairs += 1
+
+        if valid_pairs > 0:
+            return total_loss / valid_pairs
+        else:
+            return torch.tensor(0.0, device=embeddings.device)
+
+
+def test_temporal_processing():
+    """Test the improved temporal processing implementation."""
+    import torch
+    from models.network import ParticleTrackerModel, DualBranchParticleTracker, AttentiveParticleTracker
+
+    # Create test input
+    batch_size = 2
+    num_frames = 5
+    channels = 1
+    height = 64
+    width = 64
+
+    x = torch.randn(batch_size, num_frames, channels, height, width)
+
+    # Test ParticleTrackerModel
+    print("Testing ParticleTrackerModel...")
+    model1 = ParticleTrackerModel(
+        input_channels=channels,
+        num_frames=num_frames,
+        base_filters=32,
+        depth=3,
+        embedding_dim=16
+    )
+
+    output1 = model1(x)
+    print("Output keys:", output1.keys())
+    print("Positions shape:", output1['positions'].shape)
+    print("Embeddings shape:", output1['embeddings'].shape)
+
+    # Test DualBranchParticleTracker
+    print("\nTesting DualBranchParticleTracker...")
+    model2 = DualBranchParticleTracker(
+        input_channels=channels,
+        num_frames=num_frames,
+        base_filters=32,
+        depth=3
+    )
+
+    output2 = model2(x)
+    print("Output keys:", output2.keys())
+    print("Positions shape:", output2['positions'].shape)
+    print("Associations shape:", output2['associations'].shape)
+
+    # Test AttentiveParticleTracker
+    print("\nTesting AttentiveParticleTracker...")
+    model3 = AttentiveParticleTracker(
+        input_channels=channels,
+        num_frames=num_frames,
+        base_filters=32,
+        depth=3,
+        heads=4
+    )
+
+    output3 = model3(x)
+    print("Output keys:", output3.keys())
+    print("Positions shape:", output3['positions'].shape)
+    print("Embeddings shape:", output3['embeddings'].shape)
+
+    print("\nAll models successfully tested!")
+
+

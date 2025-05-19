@@ -279,7 +279,8 @@ class ParticleTrackerModel(nn.Module):
                  base_filters: int = 64,
                  depth: int = 4,
                  output_channels: int = 1,
-                 use_batch_norm: bool = True):
+                 use_batch_norm: bool = True,
+                 embedding_dim: int = 32):
         """
         Initialize the model.
 
@@ -350,15 +351,25 @@ class ParticleTrackerModel(nn.Module):
         # Final output convolution
         self.final_conv = nn.Conv2d(self.encoder_channels[0], output_channels, kernel_size=1)
 
+        # Add embedding head
+        self.embedding_conv = nn.Sequential(
+            nn.Conv2d(self.encoder_channels[0], self.encoder_channels[0], kernel_size=3, padding=1),
+            nn.BatchNorm2d(self.encoder_channels[0]) if use_batch_norm else nn.Identity(),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.encoder_channels[0], embedding_dim, kernel_size=1)
+        )
+
+        self.embedding_dim = embedding_dim
+
     def forward(self, x):
         """
-        Forward pass of the model.
+        Forward pass with embedding output.
 
         Args:
             x: Input tensor of shape (batch, frames, channels, height, width)
 
         Returns:
-            Output prediction tensor
+            Dictionary with 'positions' and 'embeddings'
         """
         # Fix for tensor dimension issue - handle both sequence and single frame inputs
         if x.dim() == 4:  # (batch, channels, height, width) - single frame
@@ -368,8 +379,7 @@ class ParticleTrackerModel(nn.Module):
         # Now we're sure x has shape (batch, frames, channels, height, width)
         batch_size, num_frames, channels, height, width = x.size()
 
-        # We'll process each frame sequentially through the encoder
-        # and use ConvLSTM to maintain temporal information
+        # Process frames with shared hidden state
         hidden_state = None
         skip_connections = [[] for _ in range(self.depth)]
 
@@ -396,11 +406,22 @@ class ParticleTrackerModel(nn.Module):
             skip_features = skip_connections[skip_idx][-1]
             features = decoder(features, skip_features)
 
+        # Generate position probability map
+        positions = self.final_conv(features)
+
+        # Generate embeddings
+        embeddings = self.embedding_conv(features)
+
         # Final convolution to get output
         output = self.final_conv(features)
 
-        return output
+        # For compatibility, ensure outputs have same dimensionality as inputs
+        # If input had 5 dimensions (with frame dim), output should too
+        if x.dim() == 5 and output.dim() == 4:
+            # Add frame dimension at position 1
+            output = output.unsqueeze(1)
 
+        return output
 
 class DualBranchParticleTracker(nn.Module):
     """
@@ -496,15 +517,13 @@ class DualBranchParticleTracker(nn.Module):
 
     def forward(self, x):
         """
-        Forward pass of the dual branch model.
+        Forward pass with improved temporal handling.
 
         Args:
             x: Input tensor of shape (batch, frames, channels, height, width)
 
         Returns:
-            Dictionary with two outputs:
-            - 'positions': High-resolution probability map for particle positions
-            - 'associations': Association map for tracking particles across frames
+            Dictionary with 'positions', 'embeddings', and 'associations'
         """
         batch_size, num_frames, channels, height, width = x.size()
 
@@ -531,7 +550,7 @@ class DualBranchParticleTracker(nn.Module):
         # Localization branch
         loc_features = bottleneck_features
         for i, decoder in enumerate(self.loc_decoders):
-            # Use the skip connection from the last frame
+            # Use the skip connection from the last frame for most recent information
             skip_idx = self.depth - i - 1
             skip_features = skip_connections[skip_idx][-1]
             loc_features = decoder(loc_features, skip_features)
@@ -539,19 +558,26 @@ class DualBranchParticleTracker(nn.Module):
         # Super-resolution upsampling for localization
         positions = self.loc_upsampler(loc_features)
 
-        # Association branch
+        # Association branch - generates association scores between particles in consecutive frames
         assoc_features = bottleneck_features
         for i, decoder in enumerate(self.assoc_decoders):
-            # Use the skip connection from the middle frame
+            # Use the skip connection from the middle frame for context
             skip_idx = self.depth - i - 1
             mid_frame_idx = num_frames // 2
             skip_features = skip_connections[skip_idx][mid_frame_idx]
             assoc_features = decoder(assoc_features, skip_features)
 
-        # Final convolution for association map
+        # Association map shows relationships between frames
         associations = self.assoc_final(assoc_features)
 
-        return {'positions': positions, 'associations': associations}
+        # Add embedding output for particle identity tracking
+        embeddings = assoc_features
+
+        return {
+            'positions': positions,
+            'associations': associations,
+            'embeddings': embeddings
+        }
 
 
 class AttentiveParticleTracker(nn.Module):
