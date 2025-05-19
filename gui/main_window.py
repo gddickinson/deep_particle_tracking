@@ -2293,7 +2293,7 @@ class PredictionTab(QWidget):
                     pos = positions[frame_idx]
                     # Positions are stored as (y, x) order but plotting needs x, y
                     self.ax.scatter(
-                        pos[:, 1], pos[:, 0],  # Switched to match (y, x) storage order
+                        pos[:, 0], pos[:, 1],  # Switched to match (y, x) storage order
                         c='red', s=20, alpha=0.7, marker='o'
                     )
 
@@ -2320,13 +2320,13 @@ class PredictionTab(QWidget):
                             if len(history) > 1:
                                 # Switch coordinates for plotting if tracks are stored as (y, x)
                                 self.ax.plot(
-                                    history[:, 1], history[:, 0],  # Switched for (y, x) order
+                                    history[:, 0], history[:, 1],  # Switched for (y, x) order
                                     '-', color=color, alpha=0.5
                                 )
 
                             # Plot current position
                             self.ax.plot(
-                                track[frame_idx, 1], track[frame_idx, 0],  # Switched for (y, x) order
+                                track[frame_idx, 0], track[frame_idx, 1],  # Switched for (y, x) order
                                 'o', color=color, markersize=7
                             )
 
