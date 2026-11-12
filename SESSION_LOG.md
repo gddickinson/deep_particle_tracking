@@ -49,3 +49,15 @@
 - For George: the tracking term (lambda_track 0.5) was 0 until now and starts ~10-60x the localisation loss on an
   untrained model; its weight may want tuning once real training runs are made.
 
+
+## 2026-11-12 (follow-up 4): tracking-loss balance
+- EmbeddingLoss now averages squared embedding distances over channels (`normalize_by_dim=True`), so its scale no
+  longer depends on embedding_dim or embedding magnitude: at initialisation 0.5 x track / loc is 0.9-4.6x across
+  the three models and two particle densities (was 2-44x with summed distances).
+- CombinedLoss ramps the tracking weight linearly from 0 to lambda_track (default 0.5) over track_warmup_steps
+  (default 200, ~1.6 epochs of the GUI's default 1000 samples / batch 8); validation (eval mode) always uses the
+  full weight so best-checkpoint selection is not biased by the ramp. Trainer takes track_warmup_steps, steps the
+  schedule after each optimiser step and saves/restores its position in checkpoints. Defaults live in
+  models/losses.py (DEFAULT_LAMBDA_TRACK, DEFAULT_TRACK_WARMUP_STEPS); /api/method reads them.
+- scripts/loss_balance_comparison.py (seeded CPU, 200 steps, ~80 s): localisation still learns and same/different-ID
+  separation still appears with the new defaults (numbers in the web-interface report). tests/test_loss_balance.py.

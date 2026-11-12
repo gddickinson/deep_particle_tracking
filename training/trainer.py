@@ -18,7 +18,7 @@ from datetime import datetime
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from models.network import create_model, ParticleTrackerModel
-from models.losses import CombinedLoss
+from models.losses import CombinedLoss, DEFAULT_LAMBDA_TRACK, DEFAULT_TRACK_WARMUP_STEPS
 from utils.device_manager import device_manager
 from utils.thread_manager import thread_manager
 
@@ -35,7 +35,8 @@ class Trainer:
                  lr: float = 0.001,
                  weight_decay: float = 0.0001,
                  lambda_loc: float = 1.0,
-                 lambda_track: float = 0.5,
+                 lambda_track: float = DEFAULT_LAMBDA_TRACK,
+                 track_warmup_steps: int = DEFAULT_TRACK_WARMUP_STEPS,
                  scheduler_type: Optional[str] = 'plateau',
                  checkpoint_dir: str = 'checkpoints',
                  log_every: int = 10,
@@ -51,7 +52,9 @@ class Trainer:
             lr: Learning rate
             weight_decay: Weight decay for regularization
             lambda_loc: Weight for localization loss
-            lambda_track: Weight for tracking loss
+            lambda_track: Weight for tracking (embedding) loss, reached after the warm-up
+            track_warmup_steps: Optimiser steps over which the tracking weight ramps linearly from 0 to lambda_track
+                (0 = no warm-up); validation always uses the full weight
             scheduler_type: Type of learning rate scheduler (None, 'plateau', 'cosine', 'step')
             checkpoint_dir: Directory to save checkpoints
             log_every: Log every N steps
@@ -65,6 +68,7 @@ class Trainer:
         self.weight_decay = weight_decay
         self.lambda_loc = lambda_loc
         self.lambda_track = lambda_track
+        self.track_warmup_steps = track_warmup_steps
         self.scheduler_type = scheduler_type
         self.checkpoint_dir = checkpoint_dir
         self.log_every = log_every
@@ -120,7 +124,8 @@ class Trainer:
         # Create criterion
         self.criterion = CombinedLoss(
             lambda_loc=self.lambda_loc,
-            lambda_track=self.lambda_track
+            lambda_track=self.lambda_track,
+            track_warmup_steps=self.track_warmup_steps
         )
 
         # Create scheduler
@@ -235,6 +240,7 @@ class Trainer:
             Average training loss
         """
         self.model.train()
+        self.criterion.train()   # tracking-weight warm-up applies to training steps only
         total_loss = 0.0
 
         with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}") as pbar:
@@ -296,6 +302,7 @@ class Trainer:
                     # Backward pass
                     loss.backward()
                     self.optimizer.step()
+                    self.criterion.step()
 
                     # Update metrics
                     total_loss += loss.item()
@@ -333,6 +340,7 @@ class Trainer:
             Average validation loss
         """
         self.model.eval()
+        self.criterion.eval()   # full tracking weight, so validation losses are comparable across epochs
         total_loss = 0.0
 
         with torch.no_grad():
@@ -400,7 +408,8 @@ class Trainer:
             'history': self.history,
             'best_val_loss': self.best_val_loss,
             'model_type': self.model_type,
-            'model_config': self.model_config
+            'model_config': self.model_config,
+            'loss_steps_done': self.criterion.steps_done if self.criterion is not None else 0
         }
 
         if self.scheduler is not None:
@@ -487,6 +496,9 @@ class Trainer:
         self.current_epoch = checkpoint.get('epoch', 0) + 1
         self.history = checkpoint.get('history', {'train_loss': [], 'val_loss': []})
         self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        # Resume the tracking-weight warm-up where it stopped (older checkpoints: assume it finished)
+        if self.criterion is not None:
+            self.criterion.steps_done = checkpoint.get('loss_steps_done', self.criterion.track_warmup_steps)
 
         logger.info(f"Checkpoint loaded from {checkpoint_path}, resuming from epoch {self.current_epoch}")
 

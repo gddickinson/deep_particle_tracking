@@ -15,25 +15,33 @@ class EmbeddingLoss(nn.Module):
     Embedding loss for particle tracking.
     Encourages embeddings of the same particle across frames to be similar
     and embeddings of different particles to be dissimilar.
+
+    The loss is a mean over particle-pixel pairs (then over frame pairs and windows), and by default the squared
+    distance is also a mean over embedding channels (normalize_by_dim). Without that, the same-ID term grows with the
+    embedding dimension and starts 15-60x larger than the localisation loss on an untrained model.
     """
 
     def __init__(self,
                  margin: float = 1.0,
                  pos_weight: float = 1.0,
-                 neg_weight: float = 1.0):
+                 neg_weight: float = 1.0,
+                 normalize_by_dim: bool = True):
         """
         Initialize Embedding Loss.
 
         Args:
-            margin: Margin for contrastive loss
+            margin: Margin for contrastive loss (on the per-channel mean squared distance when normalize_by_dim)
             pos_weight: Weight for positive pairs
             neg_weight: Weight for negative pairs
+            normalize_by_dim: Divide squared embedding distances by the embedding dimension (mean over channels, not
+                sum), so the loss scale does not depend on embedding_dim
         """
         super().__init__()
         # Ensure float32 dtype for internal parameters
         self.margin = float(margin)  # Ensure Python float (which will convert to fp32 in PyTorch)
         self.pos_weight = float(pos_weight)
         self.neg_weight = float(neg_weight)
+        self.normalize_by_dim = bool(normalize_by_dim)
 
     def forward(self,
                 embeddings: torch.Tensor,
@@ -105,6 +113,8 @@ class EmbeddingLoss(nn.Module):
 
                     # Compute squared Euclidean distance
                     dist_matrix = torch.sum((emb1_expanded - emb2_expanded) ** 2, dim=2)  # (N1, N2)
+                    if self.normalize_by_dim:
+                        dist_matrix = dist_matrix / channels
 
                     # Create match matrix (1 if same ID, 0 otherwise)
                     ids1_expanded = ids1_particles.unsqueeze(1)  # (N1, 1)

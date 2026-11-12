@@ -20,7 +20,16 @@ from models.loss_localization import FocalLoss, DistanceTransformLoss
 from models.loss_embedding import EmbeddingLoss, TemporalEmbeddingLoss
 from models.loss_matching import HungarianMatchingLoss
 
-__all__ = ['FocalLoss', 'DistanceTransformLoss', 'EmbeddingLoss', 'HungarianMatchingLoss', 'CombinedLoss',
+# Training defaults for the tracking (embedding) term, shared by CombinedLoss and training.trainer.Trainer.
+# EmbeddingLoss averages over particle-pixel pairs and embedding channels, so at initialisation the weighted tracking
+# term is about 1-3x the localisation term for all three models (was 1-22x with summed distances; see
+# tests/test_loss_balance.py and scripts/loss_balance_comparison.py). Its weight is ramped linearly from 0 to
+# lambda_track over the first DEFAULT_TRACK_WARMUP_STEPS optimiser steps (about 1.6 epochs of the GUI's default 1000
+# samples / batch 8) so localisation gets a head start; both heads share the encoder and ConvLSTM.
+DEFAULT_LAMBDA_TRACK = 0.5
+DEFAULT_TRACK_WARMUP_STEPS = 200
+
+__all__ = ['DEFAULT_LAMBDA_TRACK', 'DEFAULT_TRACK_WARMUP_STEPS', 'FocalLoss', 'DistanceTransformLoss', 'EmbeddingLoss', 'HungarianMatchingLoss', 'CombinedLoss',
            'TemporalEmbeddingLoss', 'test_temporal_processing']
 
 
@@ -36,7 +45,8 @@ class CombinedLoss(nn.Module):
                  loc_loss: nn.Module = None,
                  track_loss: nn.Module = None,
                  lambda_loc: float = 1.0,
-                 lambda_track: float = 1.0):
+                 lambda_track: float = DEFAULT_LAMBDA_TRACK,
+                 track_warmup_steps: int = DEFAULT_TRACK_WARMUP_STEPS):
         """
         Initialize Combined Loss.
 
@@ -44,7 +54,10 @@ class CombinedLoss(nn.Module):
             loc_loss: Loss function for localization
             track_loss: Loss function for tracking
             lambda_loc: Weight for localization loss
-            lambda_track: Weight for tracking loss
+            lambda_track: Weight for tracking loss (after the warm-up)
+            track_warmup_steps: In training mode the tracking weight rises linearly from 0 to lambda_track over this
+                many calls to step() (one per optimiser step); 0 = no warm-up. In eval mode (validation) the full
+                lambda_track is always used, so validation losses stay comparable across epochs.
         """
         super().__init__()
 
@@ -61,6 +74,18 @@ class CombinedLoss(nn.Module):
 
         self.lambda_loc = lambda_loc
         self.lambda_track = lambda_track
+        self.track_warmup_steps = int(track_warmup_steps)
+        self.steps_done = 0
+
+    def track_weight(self) -> float:
+        """Weight of the tracking term now: ramped during warm-up in training mode, lambda_track otherwise."""
+        if not self.training or self.track_warmup_steps <= 0:
+            return self.lambda_track
+        return self.lambda_track * min(1.0, self.steps_done / self.track_warmup_steps)
+
+    def step(self):
+        """Advance the warm-up schedule by one optimiser step."""
+        self.steps_done += 1
 
     def forward(self, outputs: Union[torch.Tensor, Dict[str, torch.Tensor]],
                 targets: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -149,7 +174,9 @@ class CombinedLoss(nn.Module):
             losses['track_loss'] = track_loss
 
         # Compute total loss
-        losses['total'] = self.lambda_loc * losses['loc_loss'] + self.lambda_track * losses['track_loss']
+        weight = self.track_weight()
+        losses['track_weight'] = torch.tensor(weight, device=device)
+        losses['total'] = self.lambda_loc * losses['loc_loss'] + weight * losses['track_loss']
 
         return losses
 

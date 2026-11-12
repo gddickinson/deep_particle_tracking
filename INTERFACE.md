@@ -17,12 +17,12 @@ Top-level packages (run from the repo root; imports are `from simulator.x import
 | `models/tracker_simple.py` | `ParticleTrackerModel` (U-Net + ConvLSTM) |
 | `models/tracker_dual.py` | `DualBranchParticleTracker` (shared encoder + ConvLSTM; localisation and association decoders) |
 | `models/tracker_attentive.py` | `AttentiveParticleTracker` (temporal multi-head attention at the bottleneck) |
-| `models/losses.py` | `CombinedLoss` (trainer's loss); re-exports the component losses below |
+| `models/losses.py` | `CombinedLoss` (trainer's loss; tracking weight `DEFAULT_LAMBDA_TRACK` ramped from 0 over `DEFAULT_TRACK_WARMUP_STEPS` training steps via `step()`, full weight in eval mode); re-exports the component losses below |
 | `models/loss_localization.py` | `FocalLoss`, `DistanceTransformLoss` |
-| `models/loss_embedding.py` | `EmbeddingLoss` (contrastive, pairs across frames by ground-truth `track_ids`), `TemporalEmbeddingLoss` |
+| `models/loss_embedding.py` | `EmbeddingLoss` (contrastive, pairs across frames by ground-truth `track_ids`; squared distance averaged over channels, `normalize_by_dim`), `TemporalEmbeddingLoss` |
 | `models/loss_matching.py` | `HungarianMatchingLoss` |
 | `training/data_loader.py` | `ParticleDataset`, `SimulatedParticleDataset` (own particle/PSF loop, noise via `simulator.movie.add_noise` at a random SNR per frame), transforms, `create_dataloaders` |
-| `training/trainer.py` | `Trainer`, `TrainingManager` (checkpoints to `checkpoints/<id>/best.pth`) |
+| `training/trainer.py` | `Trainer` (`lambda_track`, `track_warmup_steps`; warm-up position saved in checkpoints), `TrainingManager` (checkpoints to `checkpoints/<id>/best.pth`) |
 | `prediction/inference.py` | re-exports `ParticlePredictor`, `PredictionManager`, `MetricsCalculator` (old import path) |
 | `prediction/predictor.py` | `ParticlePredictor` (sliding windows of the trained length; links t-1 -> t with both frames' embeddings from the window ending at t; PyTorch); delegates to postprocess.py / preprocess.py |
 | `prediction/manager.py` | `PredictionManager` (predictor registry, background jobs, saving results) |
@@ -47,10 +47,11 @@ Top-level packages (run from the repo root; imports are `from simulator.x import
 | `web/static/{home,simulate,benchmark,method,model,about}.js` | pages; `sim_controls.js`, `sim_view.js`, `chart.js` helpers |
 | `web/static/engine.test.mjs` | node test against `tests/fixtures/engine_fixture.json` (`scripts/make_engine_fixture.py`) |
 | `scripts/build_static.py`, `scripts/screenshots.py` | static export for Pages; Playwright smoke test / README shots |
+| `scripts/loss_balance_comparison.py` | seeded CPU comparison (~80 s) of tracking-loss settings: localisation loss and same/different-ID embedding gap |
 | `.github/workflows/pages.yml` | builds and deploys the static site on push to main |
 
 ## Tests (`tests/`)
 `test_movie.py`, `test_snr_definition.py`, `test_airy_psf.py`, `test_detect_peaks.py`, `test_metrics.py`, `test_normalize.py`,
 `test_predictor_sequences.py`, `test_embeddings.py`, `test_training_step.py`, `test_models_dual_attentive.py`,
-`test_embedding_training.py` (the last six need PyTorch),
+`test_embedding_training.py`, `test_loss_balance.py` (the last seven need PyTorch),
 `test_classical.py`, `test_engine_fixture.py`, `test_web.py`, `test_local_models.py` (needs PyTorch; skipped otherwise).

@@ -40,7 +40,7 @@ def test_embedding_loss_is_nonzero_and_reaches_the_embedding_head(model_type):
     assert emb.dim() == 5 and emb.shape[:2] == (2, T), 'one embedding map per input frame'
     assert emb.shape[-2:] == batch['frames'].shape[-2:], 'embeddings at frame resolution'
 
-    losses = CombinedLoss()(out, batch)
+    losses = CombinedLoss(track_warmup_steps=0)(out, batch)   # full tracking weight from the first step
     assert float(losses['track_loss'].detach()) > 0
     losses['total'].backward()
     grads = [p.grad for p in _embedding_head(model).parameters()]
@@ -98,7 +98,7 @@ def test_tiny_training_separates_same_and_different_tracks():
         return {k: torch.stack([it[k] for it in items]) for k in items[0]}
 
     held_out = batch(range(5000, 5016))
-    loss_fn = CombinedLoss(lambda_track=1.0)
+    loss_fn = CombinedLoss(lambda_track=1.0, track_warmup_steps=0)
     opt = torch.optim.Adam(model.parameters(), 1e-2)
 
     def gap():

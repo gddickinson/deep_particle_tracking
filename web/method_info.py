@@ -16,7 +16,19 @@ def _doc(node) -> str:
     return ' '.join(d.split('\n\n')[0].split())
 
 
-def _defaults(fn) -> dict:
+def _constants(tree) -> dict:
+    """Module-level NAME = <literal> assignments (e.g. DEFAULT_LAMBDA_TRACK), so defaults that name them resolve."""
+    out = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                out[node.targets[0].id] = ast.literal_eval(node.value)
+            except ValueError:
+                pass
+    return out
+
+
+def _defaults(fn, constants=None) -> dict:
     args = fn.args.args[1:]
     defs = fn.args.defaults
     out = {}
@@ -24,17 +36,19 @@ def _defaults(fn) -> dict:
         try:
             out[a.arg] = ast.literal_eval(d)
         except ValueError:
-            out[a.arg] = ast.unparse(d)
+            name = ast.unparse(d)
+            out[a.arg] = (constants or {}).get(name, name)
     return out
 
 
 def _classes(path: Path, base: str):
     tree = ast.parse(path.read_text())
+    constants = _constants(tree)
     out = []
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and any(ast.unparse(b) == base for b in node.bases):
             init = next((n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == '__init__'), None)
-            out.append({'name': node.name, 'doc': _doc(node), 'defaults': _defaults(init) if init else {},
+            out.append({'name': node.name, 'doc': _doc(node), 'defaults': _defaults(init, constants) if init else {},
                         'line': node.lineno, 'file': str(path.relative_to(ROOT))})
     return out, tree
 
@@ -65,9 +79,11 @@ def method_info() -> dict:
                     key = ast.literal_eval(sub.test.comparators[0])
                     call = sub.body[0].value
                     factory[key] = call.func.id
-    losses, _ = _package_classes(ROOT / 'models' / 'losses.py', 'nn.Module')
+    losses, loss_tree = _package_classes(ROOT / 'models' / 'losses.py', 'nn.Module')
+    consts = _constants(loss_tree)
     return {'networks': nets, 'create_model': factory, 'losses': losses,
             'trainer_loss': 'CombinedLoss (FocalLoss alpha 0.25, gamma 2 for localisation + EmbeddingLoss margin 1 '
                             'for tracking: one embedding map per input frame, same / different ground-truth track IDs '
-                            'pulled together / pushed apart across the window\'s frames), as set in training/trainer.py '
-                            'and models/losses.py'}
+                            'pulled together / pushed apart across the window\'s frames, squared distances averaged '
+                            f'over embedding channels; tracking weight {consts["DEFAULT_LAMBDA_TRACK"]}, ramped up from 0 '
+                            f'over the first {consts["DEFAULT_TRACK_WARMUP_STEPS"]} optimiser steps), as set in training/trainer.py and models/losses.py'}
