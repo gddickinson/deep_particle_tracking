@@ -90,10 +90,11 @@ class ParticlePredictor:
         else frame_sequence_length."""
         return max(1, int((self.model_config or {}).get('num_frames', self.frame_sequence_length)))
 
-    def _run_model(self, window: np.ndarray):
+    def _run_window(self, window: np.ndarray):
         """Run the network on a window (T, H, W) of [0, 1] frames.
 
-        Returns (probability map (H, W) for the window's last frame, embedding map (E, H, W) or None).
+        Returns (probability map (H, W) for the window's last frame, embedding maps (T', E, H, W) or None), where
+        the models give one embedding map per input frame (T' = T; older single-map outputs give T' = 1).
         """
         x = torch.from_numpy(np.ascontiguousarray(window, dtype=np.float32)).to(self.device)
         x = x[None, :, None]  # [batch 1, time T, channel 1, H, W]
@@ -108,11 +109,18 @@ class ParticlePredictor:
             positions = positions[:, -1]
         prob_map = positions[0, 0]
         if embeddings is not None:
-            embeddings = embeddings.cpu().numpy()
-            while embeddings.ndim > 4:
-                embeddings = embeddings[:, -1]
-            embeddings = embeddings[0]
+            embeddings = embeddings.cpu().numpy()[0]
+            if embeddings.ndim == 3:  # (E, H, W): a single map
+                embeddings = embeddings[None]
         return prob_map, embeddings
+
+    def _run_model(self, window: np.ndarray):
+        """Run the network on a window (T, H, W) of [0, 1] frames.
+
+        Returns (probability map (H, W) for the window's last frame, embedding map (E, H, W) of that frame or None).
+        """
+        prob_map, embeddings = self._run_window(window)
+        return prob_map, (embeddings[-1] if embeddings is not None else None)
 
     def predict_frame(self,
                      frame: np.ndarray,
@@ -166,19 +174,23 @@ class ParticlePredictor:
         frames = normalize_intensity(frames)
         L = self._window_length()
 
-        all_positions, all_prob_maps, all_embeddings = [], [], []
+        all_positions, all_prob_maps, all_embeddings, prev_embeddings = [], [], [], []
         for t in range(len(frames)):
-            prob_map, embeddings = self._run_model(frames[max(0, t - L + 1):t + 1])
+            prob_map, embeddings = self._run_window(frames[max(0, t - L + 1):t + 1])
             all_positions.append(self._postprocess_detection(prob_map, frames.shape[1:]))
             if return_probability_maps:
                 all_prob_maps.append(prob_map)
             if embeddings is not None:
-                all_embeddings.append(embeddings)
+                all_embeddings.append(embeddings[-1])
+                # frame t-1 as seen in this window: linking t-1 -> t compares embeddings from one window, the
+                # pairs EmbeddingLoss trains (None when the window has a single frame)
+                prev_embeddings.append(embeddings[-2] if len(embeddings) > 1 else None)
 
         tracks = None
         if link_particles and len(all_positions) > 1:
             if len(all_embeddings) > 0:
-                tracks = self._link_particles_with_embeddings(all_positions, all_embeddings, max_distance)
+                tracks = self._link_particles_with_embeddings(all_positions, all_embeddings, max_distance,
+                                                              prev_embeddings)
             else:
                 tracks = self._link_particles(all_positions, max_distance)
 
@@ -218,17 +230,28 @@ class ParticlePredictor:
     def _link_particles_with_embeddings(self,
                                       positions: List[np.ndarray],
                                       embeddings: List[np.ndarray],
-                                      max_distance: float = 20.0) -> List[np.ndarray]:
+                                      max_distance: float = 20.0,
+                                      prev_embeddings: Optional[List[Optional[np.ndarray]]] = None) -> List[np.ndarray]:
         """
         Link particles by the network's embeddings (prediction/postprocess.py link_particles_with_embeddings):
         each detection takes the embedding vector at its pixel from that frame's (E, H, W) embedding map; the cost
         is the embedding distance and positions only gate pairs to within max_distance.
+
+        prev_embeddings[t] (optional) is frame t-1's embedding map from the window ending at t; the previous
+        frame's detections are then described from the same window as frame t's detections.
         """
         if len(embeddings) != len(positions):
             return self._link_particles(positions, max_distance)
-        descriptors = []
-        for pos, emb in zip(positions, embeddings):
-            yx = np.rint(np.asarray(pos, dtype=float)).astype(int).reshape(-1, 2)
-            yx = np.clip(yx, 0, np.array(emb.shape[1:]) - 1)
-            descriptors.append(emb[:, yx[:, 0], yx[:, 1]].T if len(yx) else np.zeros((0, emb.shape[0])))
-        return link_particles_with_embeddings(positions, descriptors, max_distance)
+        descriptors = [self._descriptors(pos, emb) for pos, emb in zip(positions, embeddings)]
+        prev = None
+        if prev_embeddings is not None and len(prev_embeddings) == len(positions):
+            prev = [None] + [self._descriptors(positions[t - 1], prev_embeddings[t])
+                             if prev_embeddings[t] is not None else None for t in range(1, len(positions))]
+        return link_particles_with_embeddings(positions, descriptors, max_distance, prev_descriptors=prev)
+
+    @staticmethod
+    def _descriptors(pos: np.ndarray, emb: np.ndarray) -> np.ndarray:
+        """(N, E) embedding vectors of an (E, H, W) map at the detections' nearest pixels."""
+        yx = np.rint(np.asarray(pos, dtype=float)).astype(int).reshape(-1, 2)
+        yx = np.clip(yx, 0, np.array(emb.shape[1:]) - 1)
+        return emb[:, yx[:, 0], yx[:, 1]].T if len(yx) else np.zeros((0, emb.shape[0]))

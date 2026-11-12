@@ -282,3 +282,27 @@ def super_resolution_head(channels: int, upsample_factor: int) -> nn.Sequential:
         layers += [nn.Conv2d(channels, channels * 4, kernel_size=3, padding=1), nn.PixelShuffle(2), nn.ReLU(inplace=True)]
     layers += [nn.Conv2d(channels, 1, kernel_size=1), nn.Sigmoid()]
     return nn.Sequential(*layers)
+
+
+def decode_frames(decoders: nn.ModuleList, bottlenecks: List[torch.Tensor],
+                  skip_connections: List[List[torch.Tensor]]) -> torch.Tensor:
+    """Decode every frame of a window in one pass (frames folded into the batch).
+
+    Frame t is decoded from its own bottleneck features (e.g. the ConvLSTM state after frame t) and its own encoder
+    skip connections; decoder i uses skip level len(decoders) - i - 1, as in the models' forward passes.
+
+    Args:
+        decoders: DecoderBlocks, deepest first
+        bottlenecks: per frame, (B, C, h, w)
+        skip_connections: per encoder level, a per-frame list of (B, C_l, H_l, W_l)
+
+    Returns:
+        (B, T, C_out, H, W) decoded features, one map per frame
+    """
+    batch, frames = bottlenecks[0].shape[0], len(bottlenecks)
+    features = torch.stack(bottlenecks, dim=1).flatten(0, 1)
+    depth = len(decoders)
+    for i, decoder in enumerate(decoders):
+        skips = torch.stack(skip_connections[depth - i - 1], dim=1).flatten(0, 1)
+        features = decoder(features, skips)
+    return features.reshape(batch, frames, *features.shape[1:])

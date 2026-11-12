@@ -8,7 +8,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from models.blocks import EncoderBlock, DecoderBlock, ConvLSTMCell
+from models.blocks import EncoderBlock, DecoderBlock, ConvLSTMCell, decode_frames
 
 
 class ParticleTrackerModel(nn.Module):
@@ -113,7 +113,8 @@ class ParticleTrackerModel(nn.Module):
             x: Input tensor of shape (batch, frames, channels, height, width)
 
         Returns:
-            Dictionary with 'positions' and 'embeddings'
+            Dictionary with 'positions' (batch, 1, out, H, W) for the last frame and 'embeddings'
+            (batch, frames, embedding_dim, H, W), one map per input frame
         """
         # Fix for tensor dimension issue - handle both sequence and single frame inputs
         if x.dim() == 4:  # (batch, channels, height, width) - single frame
@@ -123,8 +124,9 @@ class ParticleTrackerModel(nn.Module):
         # Now we're sure x has shape (batch, frames, channels, height, width)
         batch_size, num_frames, channels, height, width = x.size()
 
-        # Process frames with shared hidden state
+        # Process frames with shared hidden state, keeping the ConvLSTM state after every frame
         hidden_state = None
+        hiddens = []
         skip_connections = [[] for _ in range(self.depth)]
 
         for frame_idx in range(num_frames):
@@ -139,26 +141,17 @@ class ParticleTrackerModel(nn.Module):
 
             # Apply ConvLSTM at the bottleneck
             hidden_state = self.convlstm(features, hidden_state)
+            hiddens.append(hidden_state[0])  # Use hidden, not cell state
 
-        # Use the final hidden state for decoding
-        features = hidden_state[0]  # Use hidden, not cell state
+        # Decode every frame (state after frame t + frame t's skip connections): the embedding loss compares
+        # embeddings of the same particle across frames, so it needs one embedding map per frame (with a single
+        # last-frame map it had no frame pairs, was always 0 and the embeddings were never trained)
+        features = decode_frames(self.decoders, hiddens, skip_connections)  # (B, T, C, H, W)
 
-        # Pass through decoder blocks with skip connections
-        for i, decoder in enumerate(self.decoders):
-            # Use the skip connection from the last frame
-            skip_idx = self.depth - i - 1
-            skip_features = skip_connections[skip_idx][-1]
-            features = decoder(features, skip_features)
-
-        # Position map and per-pixel embeddings for the last frame of the input sequence
+        # Position map for the last frame of the input sequence (as before); per-pixel embeddings for every frame
         # Sigmoid: a probability map, as FocalLoss (binary cross-entropy) and the predictor's threshold expect
-        positions = torch.sigmoid(self.final_conv(features))
-        embeddings = self.embedding_conv(features)
+        positions = torch.sigmoid(self.final_conv(features[:, -1])).unsqueeze(1)  # (B, 1, out, H, W)
+        embeddings = self.embedding_conv(features.flatten(0, 1))
+        embeddings = embeddings.reshape(batch_size, num_frames, *embeddings.shape[1:])  # (B, T, E, H, W)
 
-        # Input has a frame dimension, so the outputs get one too: (batch, 1, channels, height, width)
-        if x.dim() == 5:
-            positions = positions.unsqueeze(1)
-            embeddings = embeddings.unsqueeze(1)
-
-        # As documented: both outputs (the embeddings were computed but only the position map was returned)
         return {'positions': positions, 'embeddings': embeddings}

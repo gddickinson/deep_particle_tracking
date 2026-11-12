@@ -79,6 +79,16 @@ def test_positions_decoded_for_the_last_frame(kind):
     skips, used = [], []
     enc.register_forward_hook(lambda m, a, out: skips.append(out[1]))
     dec.register_forward_pre_hook(lambda m, a: used.append(a[1]))
+    heads = []
+    head = model.loc_upsampler if kind == 'dual' else model.position_upsampler
+    head.register_forward_pre_hook(lambda m, a: heads.append(a[0].shape[0]))
     with torch.no_grad():
         model(torch.rand(1, 3, 1, 16, 16))
-    assert len(skips) == 3 and used[0] is skips[-1]
+    assert len(skips) == 3
+    if kind == 'dual':
+        assert used[0] is skips[-1]
+    else:
+        # the Attentive decoder decodes every frame at once (frames folded into the batch, frame t in slot t, for
+        # the per-frame embeddings); the position head gets only the last frame
+        assert used[0].shape[0] == 3 and torch.equal(used[0][-1], skips[-1][0])
+    assert heads == [1]

@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from models.blocks import EncoderBlock, DecoderBlock, ConvLSTMCell, super_resolution_head
+from models.blocks import EncoderBlock, DecoderBlock, ConvLSTMCell, super_resolution_head, decode_frames
 
 
 class DualBranchParticleTracker(nn.Module):
@@ -110,12 +110,14 @@ class DualBranchParticleTracker(nn.Module):
             x: Input tensor of shape (batch, frames, channels, height, width)
 
         Returns:
-            Dictionary with 'positions', 'embeddings', and 'associations'
+            Dictionary with 'positions' (batch, 1, k*H, k*W) for the last frame, 'associations' (last frame)
+            and 'embeddings' (batch, frames, base_filters, H, W), one map per input frame
         """
         batch_size, num_frames, channels, height, width = x.size()
 
         # Process each frame through shared encoder
         hidden_state = None
+        hiddens = []  # ConvLSTM hidden state after each frame
         skip_connections = [[] for _ in range(self.depth)]
 
         for frame_idx in range(num_frames):
@@ -130,6 +132,7 @@ class DualBranchParticleTracker(nn.Module):
 
             # Apply ConvLSTM at the bottleneck
             hidden_state = self.shared_convlstm(features, hidden_state)
+            hiddens.append(hidden_state[0])
 
         # Get final bottleneck features
         bottleneck_features = hidden_state[0]  # Use hidden, not cell state
@@ -145,19 +148,15 @@ class DualBranchParticleTracker(nn.Module):
         # Super-resolution upsampling for localization
         positions = self.loc_upsampler(loc_features)
 
-        # Association branch - generates association scores between particles in consecutive frames
-        assoc_features = bottleneck_features
-        for i, decoder in enumerate(self.assoc_decoders):
-            # Use the skip connection from the middle frame for context
-            skip_idx = self.depth - i - 1
-            mid_frame_idx = num_frames // 2
-            skip_features = skip_connections[skip_idx][mid_frame_idx]
-            assoc_features = decoder(assoc_features, skip_features)
+        # Association branch: decoded for every frame (ConvLSTM state after frame t + frame t's skip connections),
+        # so the embedding loss can compare the same particle across frames. It used to decode once (final state,
+        # middle-frame skips), giving a single embedding map: the loss had no frame pairs and was always 0.
+        assoc_features = decode_frames(self.assoc_decoders, hiddens, skip_connections)  # (B, T, C, H, W)
 
-        # Association map shows relationships between frames
-        associations = self.assoc_final(assoc_features)
+        # Association map (softmax over num_frames channels), for the last frame like the positions
+        associations = self.assoc_final(assoc_features[:, -1])
 
-        # Add embedding output for particle identity tracking
+        # Per-frame embeddings for particle identity tracking: the association features
         embeddings = assoc_features
 
         return {

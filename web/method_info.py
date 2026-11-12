@@ -68,4 +68,6 @@ def method_info() -> dict:
     losses, _ = _package_classes(ROOT / 'models' / 'losses.py', 'nn.Module')
     return {'networks': nets, 'create_model': factory, 'losses': losses,
             'trainer_loss': 'CombinedLoss (FocalLoss alpha 0.25, gamma 2 for localisation + EmbeddingLoss margin 1 '
-                            'for tracking), as set in training/trainer.py and models/losses.py'}
+                            'for tracking: one embedding map per input frame, same / different ground-truth track IDs '
+                            'pulled together / pushed apart across the window\'s frames), as set in training/trainer.py '
+                            'and models/losses.py'}

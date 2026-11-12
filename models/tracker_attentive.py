@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from models.blocks import ConvBlock, EncoderBlock, DecoderBlock, super_resolution_head
+from models.blocks import ConvBlock, EncoderBlock, DecoderBlock, super_resolution_head, decode_frames
 
 
 class AttentiveParticleTracker(nn.Module):
@@ -120,7 +120,8 @@ class AttentiveParticleTracker(nn.Module):
         Returns:
             Dictionary with:
             - 'positions': Super-resolution probability map for particle positions
-            - 'embeddings': Embeddings for tracking particles (association by similarity)
+            - 'embeddings': Embeddings for tracking particles (association by similarity), one map per input
+              frame: (batch, frames, 32, height, width)
         """
         batch_size, num_frames, channels, height, width = x.size()
 
@@ -154,25 +155,19 @@ class AttentiveParticleTracker(nn.Module):
             bottleneck_attn, bottleneck_attn, bottleneck_attn
         )
 
-        # Reshape back and take the last frame's features with temporal context (the frame the predictor and
-        # CombinedLoss assign the output to; this used the central frame)
+        # Reshape back to one attended bottleneck map per frame (each with temporal context)
         bottleneck_attn = bottleneck_attn.reshape(b, hw, f, c)
-        central_idx = num_frames - 1
-        bottleneck_attn = bottleneck_attn[:, :, central_idx].reshape(b, h, w, c)
-        bottleneck_attn = bottleneck_attn.permute(0, 3, 1, 2)  # (B, C, H, W)
+        per_frame = [bottleneck_attn[:, :, t].reshape(b, h, w, c).permute(0, 3, 1, 2) for t in range(f)]
 
-        # Decoder with skip connections
-        features = bottleneck_attn
-        for i, decoder in enumerate(self.decoders):
-            # Use the skip connection from the last frame
-            skip_idx = self.depth - i - 1
-            central_skip = all_skips[skip_idx][central_idx]
-            features = decoder(features, central_skip)
+        # Decode every frame with its own skip connections, so the embedding loss has the same particle in several
+        # frames (decoding only the last frame gave one embedding map: no frame pairs, loss always 0)
+        features = decode_frames(self.decoders, per_frame, all_skips)  # (B, T, C, H, W)
 
-        # Position prediction
-        positions = self.position_upsampler(features)
+        # Position prediction for the last frame (the frame the predictor and CombinedLoss assign it to)
+        positions = self.position_upsampler(features[:, -1])
 
-        # Embedding prediction for tracking
-        embeddings = self.embedding_conv(features)
+        # Embedding prediction for tracking, every frame: (B, T, 32, H, W)
+        embeddings = self.embedding_conv(features.flatten(0, 1))
+        embeddings = embeddings.reshape(b, f, *embeddings.shape[1:])
 
         return {'positions': positions, 'embeddings': embeddings}

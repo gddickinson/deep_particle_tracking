@@ -18,6 +18,18 @@ def test_embedding_cost_decides_within_the_gate():
     assert all(not (tr[1] == [10.0, 30.0]).all() or np.isnan(tr[0, 0]) for tr in by_emb)
 
 
+def test_same_window_previous_descriptors_take_precedence():
+    # Track A at x=10; at frame 1 two gated candidates. A's own frame-0 descriptor matches x=11, but the
+    # same-window descriptor of A's frame-0 detection (prev_descriptors[1]) matches x=13: it decides.
+    pos = [np.array([[10.0, 10.0]]), np.array([[10.0, 11.0], [10.0, 13.0]])]
+    desc = [np.array([[0.0, 5.0]]), np.array([[0.0, 5.0], [1.0, 0.0]])]
+    without = link_particles_with_embeddings(pos, desc, 5.0, min_length=2)
+    with_prev = link_particles_with_embeddings(pos, desc, 5.0, min_length=2,
+                                               prev_descriptors=[None, np.array([[1.0, 0.0]])])
+    assert without[0][1].tolist() == [10.0, 11.0]
+    assert with_prev[0][1].tolist() == [10.0, 13.0]
+
+
 def test_tiny_model_returns_and_uses_embeddings(tmp_path, monkeypatch):
     torch = pytest.importorskip('torch')
     from models.network import create_model
@@ -27,7 +39,7 @@ def test_tiny_model_returns_and_uses_embeddings(tmp_path, monkeypatch):
     model = create_model('simple', **cfg)
     out = model(torch.rand(2, 3, 1, 32, 32))
     assert set(out) == {'positions', 'embeddings'}
-    assert tuple(out['positions'].shape) == (2, 1, 1, 32, 32) and tuple(out['embeddings'].shape) == (2, 1, 6, 32, 32)
+    assert tuple(out['positions'].shape) == (2, 1, 1, 32, 32) and tuple(out['embeddings'].shape) == (2, 3, 6, 32, 32)  # one map per input frame
 
     path = tmp_path / 'best.pth'
     torch.save({'model_state_dict': model.state_dict(), 'model_type': 'simple', 'model_config': cfg}, path)
@@ -35,7 +47,7 @@ def test_tiny_model_returns_and_uses_embeddings(tmp_path, monkeypatch):
     calls = []
     real = inference.link_particles_with_embeddings
     monkeypatch.setattr(inference, 'link_particles_with_embeddings',
-                        lambda p, d, m, *a: calls.append([x.shape for x in d]) or real(p, d, m, *a))
+                        lambda p, d, m, *a, **kw: calls.append([x.shape for x in d]) or real(p, d, m, *a, **kw))
     frames = np.random.default_rng(0).random((4, 32, 32)).astype(np.float32)
     res = pred.predict_sequence(frames, max_distance=5.0)
     assert len(res['embeddings']) == 4 and res['embeddings'][0].shape == (6, 32, 32)

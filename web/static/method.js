@@ -21,7 +21,8 @@ route('method', async () => {
     <div class="card"><b>Detect</b><span>Threshold the probability map and keep local maxima within the NMS radius
       (<code>detect_peaks</code>).</span></div>
     <div class="card"><b>Link</b><span>Hungarian assignment between consecutive frames within a maximum distance; tracks
-      shorter than 3 frames are dropped (<code>link_particles</code>).</span></div>
+      shorter than 3 frames are dropped (<code>link_particles</code>). The deep model's predictor uses the same gate
+      with embedding distance as the cost (<code>link_particles_with_embeddings</code>).</span></div>
     <div class="card"><b>Score</b><span>Precision, recall, F1 per frame; MOTA, MOTP and identity switches over the movie
       (<code>MetricsCalculator</code>).</span></div>
   </div>
