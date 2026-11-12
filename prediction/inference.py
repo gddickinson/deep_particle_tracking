@@ -85,62 +85,58 @@ class ParticlePredictor:
 
         return model
 
+    def _window_length(self) -> int:
+        """Frames per network input: the length the model was trained on (checkpoint model_config num_frames),
+        else frame_sequence_length."""
+        return max(1, int((self.model_config or {}).get('num_frames', self.frame_sequence_length)))
+
+    def _run_model(self, window: np.ndarray):
+        """Run the network on a window (T, H, W) of [0, 1] frames.
+
+        Returns (probability map (H, W) for the window's last frame, embedding map (E, H, W) or None).
+        """
+        x = torch.from_numpy(np.ascontiguousarray(window, dtype=np.float32)).to(self.device)
+        x = x[None, :, None]  # [batch 1, time T, channel 1, H, W]
+        with torch.no_grad():
+            output = self.model(x)
+        if isinstance(output, dict):
+            positions, embeddings = output['positions'], output.get('embeddings')
+        else:
+            positions, embeddings = output, None
+        positions = positions.cpu().numpy()
+        while positions.ndim > 4:  # [batch, time, channel, H, W]: keep the window's last frame
+            positions = positions[:, -1]
+        prob_map = positions[0, 0]
+        if embeddings is not None:
+            embeddings = embeddings.cpu().numpy()
+            while embeddings.ndim > 4:
+                embeddings = embeddings[:, -1]
+            embeddings = embeddings[0]
+        return prob_map, embeddings
+
     def predict_frame(self,
                      frame: np.ndarray,
-                     return_probability_map: bool = False) -> Dict:
+                     return_probability_map: bool = False,
+                     context: Optional[np.ndarray] = None) -> Dict:
         """
         Predict particle positions in a single frame.
 
         Args:
             frame: Input frame (2D array)
             return_probability_map: Whether to return probability map
+            context: Optional preceding frames (T-1, H, W), already in [0, 1], so the ConvLSTM sees a sequence
 
         Returns:
             Dictionary with detection results
         """
-        # Ensure frame is properly shaped and typed
         frame = self._preprocess_frame(frame)
-
-        # Convert to tensor and add batch & channel dimensions
-        x = torch.from_numpy(frame).float().to(self.device)
-        x = x.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-
-        # Forward pass
-        with torch.no_grad():
-            output = self.model(x)
-
-        # Process output based on model type
-        if isinstance(output, dict):
-            # New model format: dictionary with 'positions' and possibly 'embeddings'
-            positions = output['positions'].cpu().numpy()
-            # Handle case where positions have sequence dimension
-            if positions.ndim > 4:  # [batch, sequence, channel, height, width]
-                positions = positions[:, 0]  # Take first sequence element
-            prob_map = positions[0, 0]  # Take first batch, first channel
-            embeddings = output.get('embeddings', None)
-        else:
-            # Legacy model format: direct tensor output
-            positions = output.cpu().numpy()
-            # Handle case where positions have sequence dimension
-            if positions.ndim > 4:  # [batch, sequence, channel, height, width]
-                positions = positions[:, 0]  # Take first sequence element
-            prob_map = positions[0, 0]  # Take first batch, first channel
-            embeddings = None
-
-        # Apply threshold and non-maximum suppression
-        positions = self._postprocess_detection(prob_map)
-
-        # Prepare result
-        result = {
-            'positions': positions
-        }
-
+        window = frame[None] if context is None else np.concatenate([np.asarray(context, np.float32), frame[None]])
+        prob_map, embeddings = self._run_model(window)
+        result = {'positions': self._postprocess_detection(prob_map)}
         if embeddings is not None:
-            result['embeddings'] = embeddings.cpu().numpy()[0]
-
+            result['embeddings'] = embeddings
         if return_probability_map:
             result['probability_map'] = prob_map
-
         return result
 
     def predict_sequence(self,
@@ -151,6 +147,10 @@ class ParticlePredictor:
         """
         Predict particle positions and tracks in a sequence of frames.
 
+        Each frame t is predicted from a sliding window of the trained sequence length ending at t
+        (frames t-L+1 .. t; shorter at the start of the movie), so the ConvLSTM sees the temporal context it
+        was trained with. The stack is normalised once (prediction/preprocess.py).
+
         Args:
             frames: Input frame sequence (3D array: time, height, width)
             link_particles: Whether to link particles into tracks
@@ -160,48 +160,33 @@ class ParticlePredictor:
         Returns:
             Dictionary with detection and tracking results
         """
-        # Process each frame
-        all_positions = []
-        all_prob_maps = []
-        all_embeddings = []
+        frames = np.asarray(frames)
+        if frames.ndim == 4:
+            frames = frames[..., 0]  # first channel if RGB
+        frames = normalize_intensity(frames)
+        L = self._window_length()
 
-        for frame_idx, frame in enumerate(frames):
-            # Predict positions
-            result = self.predict_frame(frame, return_probability_map=return_probability_maps)
-
-            # Store positions
-            all_positions.append(result['positions'])
-
-            # Store probability maps if requested
+        all_positions, all_prob_maps, all_embeddings = [], [], []
+        for t in range(len(frames)):
+            prob_map, embeddings = self._run_model(frames[max(0, t - L + 1):t + 1])
+            all_positions.append(self._postprocess_detection(prob_map))
             if return_probability_maps:
-                all_prob_maps.append(result.get('probability_map', None))
+                all_prob_maps.append(prob_map)
+            if embeddings is not None:
+                all_embeddings.append(embeddings)
 
-            # Store embeddings if available
-            if 'embeddings' in result:
-                all_embeddings.append(result['embeddings'])
-
-        # Link particles into tracks
         tracks = None
         if link_particles and len(all_positions) > 1:
             if len(all_embeddings) > 0:
-                # Use embeddings for better tracking
                 tracks = self._link_particles_with_embeddings(all_positions, all_embeddings, max_distance)
             else:
-                # Fall back to standard distance-based tracking
                 tracks = self._link_particles(all_positions, max_distance)
 
-        # Prepare result
-        result = {
-            'positions': all_positions,
-            'tracks': tracks
-        }
-
+        result = {'positions': all_positions, 'tracks': tracks}
         if return_probability_maps:
             result['probability_maps'] = all_prob_maps
-
         if len(all_embeddings) > 0:
             result['embeddings'] = all_embeddings
-
         return result
 
     def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
