@@ -9,6 +9,9 @@ from scipy import special
 
 logger = logging.getLogger(__name__)
 
+# First zero of J1 (special.jn_zeros(1, 1)[0]): where the Airy pattern [2 J1(v)/v]^2 first reaches 0.
+AIRY_FIRST_ZERO = 3.8317059702075125
+
 
 class PSFModel:
     """Base class for point spread function models."""
@@ -158,8 +161,9 @@ class AiryDiskPSF(PSFModel):
             # Avoid division by zero at the center
             r_safe = np.where(r > 0, r, 1e-10)
 
-            # Calculate normalized radial coordinate
-            v = 2 * np.pi * r_safe / radius
+            # Normalized radial coordinate, scaled so the first zero of 2*J1(v)/v (v = 3.8317)
+            # falls at r = radius, as documented (2*pi*r/radius put it at 0.61 * radius)
+            v = AIRY_FIRST_ZERO * r_safe / radius
 
             # Calculate Airy disk pattern: [2*J1(v)/v]^2
             # Where J1 is the Bessel function of the first kind of order 1
