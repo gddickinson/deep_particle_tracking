@@ -33,6 +33,7 @@ from PyQt5.QtGui import QIcon, QPixmap, QFont, QColor
 from utils.device_manager import device_manager
 from utils.thread_manager import thread_manager
 from simulator.particle_generator import ParticleGenerator
+from simulator.movie import simulate_movie
 from simulator.psf_models import GaussianPSF, AiryDiskPSF
 from simulator.noise_models import PoissonNoise, GaussianNoise, MixedNoise
 from simulator.motion_models import BrownianMotion, DirectedMotion, ConfinedDiffusion
@@ -690,145 +691,33 @@ class SimulationTab(QWidget):
         self.status_label.setText("Simulating...")
         QApplication.processEvents()
 
-        # Reset particle generator
-        self.particle_generator = ParticleGenerator(image_size=(height, width))
-
         try:
-            # Create particles
-            particles = self.particle_generator.create_random_particles(
-                num_particles=num_particles,
-                intensity_range=(0.5, 1.0),
-                size_range=(0.8, 1.2)
+            # The pipeline lives in simulator/movie.py (shared with the web app); same steps and RNG order.
+            result = simulate_movie(
+                width=width, height=height, num_frames=num_frames, num_particles=num_particles,
+                motion=self.motion_combo.currentText(),
+                diffusion=self.diffusion_coef_spin.value(),
+                velocity=self.velocity_spin.value(),
+                direction_change=self.direction_change_spin.value(),
+                confinement_strength=self.confinement_strength_spin.value(),
+                confinement_radius=self.confinement_radius_spin.value(),
+                psf=self.psf_combo.currentText(),
+                psf_sigma=self.psf_sigma_spin.value(),
+                airy_radius=self.airy_radius_spin.value(),
+                noise=self.noise_combo.currentText(),
+                snr=self.snr_spin.value(),
+                background=self.background_spin.value(),
+                read_noise=self.read_noise_spin.value(),
+                blinking=self.blinking_check.isChecked(),
+                on_prob=self.on_prob_spin.value(),
+                off_prob=self.off_prob_spin.value(),
             )
-
-            # Apply motion
-            motion_model = self.motion_combo.currentText()
-
-            if motion_model == "Brownian":
-                self.particle_generator.apply_brownian_motion(
-                    particles=particles,
-                    num_frames=num_frames,
-                    diffusion_coefficient=self.diffusion_coef_spin.value()
-                )
-            elif motion_model == "Directed":
-                self.particle_generator.apply_directed_motion(
-                    particles=particles,
-                    num_frames=num_frames,
-                    velocity_range=(self.velocity_spin.value() * 0.8, self.velocity_spin.value() * 1.2),
-                    direction_change_prob=self.direction_change_spin.value()
-                )
-            elif motion_model == "Confined":
-                self.particle_generator.apply_confined_diffusion(
-                    particles=particles,
-                    num_frames=num_frames,
-                    diffusion_coefficient=self.diffusion_coef_spin.value(),
-                    confinement_strength=self.confinement_strength_spin.value(),
-                    confinement_radius=self.confinement_radius_spin.value()
-                )
-
-            # Apply blinking if enabled
-            if self.blinking_check.isChecked():
-                blinking_states = self.particle_generator.apply_blinking(
-                    particles=particles,
-                    num_frames=num_frames,
-                    on_probability=self.on_prob_spin.value(),
-                    off_probability=self.off_prob_spin.value()
-                )
-
-            # Create PSF model
-            psf_model_name = self.psf_combo.currentText()
-
-            if psf_model_name == "Gaussian":
-                psf_model = GaussianPSF(
-                    image_size=(height, width),
-                    sigma=self.psf_sigma_spin.value()
-                )
-            elif psf_model_name == "Airy Disk":
-                psf_model = AiryDiskPSF(
-                    image_size=(height, width),
-                    airy_radius=self.airy_radius_spin.value()
-                )
-
-            # Create noise model
-            noise_model_name = self.noise_combo.currentText()
-            snr = self.snr_spin.value()
-            background = self.background_spin.value()
-
-            if noise_model_name == "Poisson":
-                noise_model = PoissonNoise(scaling_factor=100.0)
-            elif noise_model_name == "Gaussian":
-                noise_model = GaussianNoise(sigma=10.0 / snr)
-            elif noise_model_name == "Poisson + Gaussian":
-                noise_model = MixedNoise(
-                    photon_scaling=100.0,
-                    read_noise=self.read_noise_spin.value(),
-                    offset=0.0
-                )
-
-            # Generate frames
-            frames = []
-            positions = []
-            track_ids = []
-
-            for frame_idx in range(num_frames):
-                # Get active particles for this frame
-                active_particles = self.particle_generator.get_active_particles(frame_idx)
-
-                # Extract positions and intensities
-                particle_positions = []
-                particle_intensities = []
-                particle_sizes = []
-                particle_ids = []
-
-                for particle in active_particles:
-                    pos = particle.get_position(frame_idx)
-                    particle_positions.append(pos)
-                    particle_intensities.append(particle.intensity)
-                    particle_sizes.append(particle.size)
-                    particle_ids.append(particle.id)
-
-                # Generate PSF image
-                if particle_positions:
-                    psf_image = psf_model.generate(
-                        positions=particle_positions,
-                        intensities=particle_intensities,
-                        sizes=particle_sizes
-                    )
-                else:
-                    psf_image = np.zeros((height, width), dtype=np.float32)
-
-                # Apply noise
-                signal_max = np.max(psf_image) if np.max(psf_image) > 0 else 1.0
-                bg_level = signal_max / snr if signal_max > 0 else background
-
-                noisy_image = noise_model.apply(psf_image + bg_level) - bg_level
-
-                # Clip to [0, 1] and add to frames
-                noisy_image = np.clip(noisy_image, 0, 1)
-                frames.append(noisy_image)
-
-                # Create position target (binary mask with particle positions)
-                pos_target = np.zeros((height, width), dtype=np.float32)
-                for pos in particle_positions:
-                    y, x = int(round(pos[0])), int(round(pos[1]))  # Changed for (y, x) order
-                    if 0 <= y < height and 0 <= x < width:
-                        pos_target[y, x] = 1.0
-
-                positions.append(pos_target)
-
-                # Create track ID target
-                track_id_target = np.zeros((height, width), dtype=np.int32)
-                for pos, pid in zip(particle_positions, particle_ids):
-                    y, x = int(round(pos[0])), int(round(pos[1]))  # Changed for (y, x) order
-                    if 0 <= y < height and 0 <= x < width:
-                        track_id_target[y, x] = pid + 1  # Add 1 because 0 is background
-
-                track_ids.append(track_id_target)
+            self.particle_generator = result['generator']
 
             # Convert to arrays
-            self.frames = np.stack(frames)
-            self.positions = np.stack(positions)
-            self.track_ids = np.stack(track_ids)
+            self.frames = result['frames']
+            self.positions = result['positions']
+            self.track_ids = result['track_ids']
 
             # Update frame slider
             self.frame_slider.setMaximum(num_frames - 1)
