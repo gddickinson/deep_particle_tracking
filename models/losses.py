@@ -613,6 +613,15 @@ class CombinedLoss(nn.Module):
                 # Use only available frames from prediction
                 pred_pos = pred_pos[:, :target_pos.size(1)]
 
+        # Super-resolution models (Dual Branch, Attentive) predict at k x the target resolution; the targets mark
+        # particle pixels at frame resolution, so take the most probable sub-pixel in each frame pixel (max-pool k)
+        if pred_pos.shape[-2:] != target_pos.shape[-2:]:
+            (ph, pw), (th, tw) = pred_pos.shape[-2:], target_pos.shape[-2:]
+            k = ph // th
+            if k > 1 and (ph, pw) == (th * k, tw * k):
+                lead = pred_pos.shape[:-2]
+                pred_pos = F.max_pool2d(pred_pos.reshape(-1, 1, ph, pw), k).reshape(*lead, th, tw)
+
         # Calculate localization loss
         pos_loss = self.loc_loss(pred_pos, target_pos)
         losses['loc_loss'] = pos_loss

@@ -132,7 +132,7 @@ class ParticlePredictor:
         frame = self._preprocess_frame(frame)
         window = frame[None] if context is None else np.concatenate([np.asarray(context, np.float32), frame[None]])
         prob_map, embeddings = self._run_model(window)
-        result = {'positions': self._postprocess_detection(prob_map)}
+        result = {'positions': self._postprocess_detection(prob_map, frame.shape)}
         if embeddings is not None:
             result['embeddings'] = embeddings
         if return_probability_map:
@@ -169,7 +169,7 @@ class ParticlePredictor:
         all_positions, all_prob_maps, all_embeddings = [], [], []
         for t in range(len(frames)):
             prob_map, embeddings = self._run_model(frames[max(0, t - L + 1):t + 1])
-            all_positions.append(self._postprocess_detection(prob_map))
+            all_positions.append(self._postprocess_detection(prob_map, frames.shape[1:]))
             if return_probability_maps:
                 all_prob_maps.append(prob_map)
             if embeddings is not None:
@@ -196,8 +196,17 @@ class ParticlePredictor:
             frame = frame[..., 0]  # Take first channel if RGB
         return normalize_intensity(frame)
 
-    def _postprocess_detection(self, prob_map: np.ndarray) -> np.ndarray:
-        """Threshold + local-maximum detection (prediction/postprocess.py detect_peaks)."""
+    def _postprocess_detection(self, prob_map: np.ndarray, frame_shape: Optional[Tuple[int, int]] = None) -> np.ndarray:
+        """Threshold + local-maximum detection (prediction/postprocess.py detect_peaks), in frame pixels.
+
+        A super-resolution map (k x frame_shape, Dual Branch / Attentive models) is searched with the NMS radius
+        scaled by k and the peaks are mapped back to frame pixel coordinates ((p + 0.5) / k - 0.5, pixel centres
+        at integers), giving sub-pixel positions.
+        """
+        k = prob_map.shape[-1] // frame_shape[-1] if frame_shape is not None else 1
+        if k > 1:
+            peaks = detect_peaks(prob_map, self.threshold, self.nms_radius * k)
+            return (peaks + 0.5) / k - 0.5
         return detect_peaks(prob_map, self.threshold, self.nms_radius)
 
     def _link_particles(self,
@@ -219,7 +228,8 @@ class ParticlePredictor:
             return self._link_particles(positions, max_distance)
         descriptors = []
         for pos, emb in zip(positions, embeddings):
-            yx = np.asarray(pos, dtype=int).reshape(-1, 2)
+            yx = np.rint(np.asarray(pos, dtype=float)).astype(int).reshape(-1, 2)
+            yx = np.clip(yx, 0, np.array(emb.shape[1:]) - 1)
             descriptors.append(emb[:, yx[:, 0], yx[:, 1]].T if len(yx) else np.zeros((0, emb.shape[0])))
         return link_particles_with_embeddings(positions, descriptors, max_distance)
 

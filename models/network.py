@@ -2,6 +2,8 @@
 Deep neural network architecture for particle tracking in microscopy images.
 """
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -419,6 +421,21 @@ class ParticleTrackerModel(nn.Module):
         # As documented: both outputs (the embeddings were computed but only the position map was returned)
         return {'positions': positions, 'embeddings': embeddings}
 
+
+def super_resolution_head(channels: int, upsample_factor: int) -> nn.Sequential:
+    """Probability map at upsample_factor x the input resolution: one (conv, PixelShuffle(2), ReLU) stage per
+    factor of 2, then a 1x1 conv and a sigmoid. upsample_factor must be a power of 2 (1 = no upsampling).
+    (The models used to hard-code 3 stages (Dual Branch, 8x) and 2 stages (Attentive, 4x) whatever was asked.)"""
+    stages = int(round(math.log2(upsample_factor))) if upsample_factor >= 1 else -1
+    if stages < 0 or 2 ** stages != upsample_factor:
+        raise ValueError(f"upsample_factor must be a power of 2, got {upsample_factor}")
+    layers = []
+    for _ in range(stages):
+        layers += [nn.Conv2d(channels, channels * 4, kernel_size=3, padding=1), nn.PixelShuffle(2), nn.ReLU(inplace=True)]
+    layers += [nn.Conv2d(channels, 1, kernel_size=1), nn.Sigmoid()]
+    return nn.Sequential(*layers)
+
+
 class DualBranchParticleTracker(nn.Module):
     """
     Advanced particle tracking model with dual branches:
@@ -482,19 +499,7 @@ class DualBranchParticleTracker(nn.Module):
             dec_in = out_channels
 
         # Final super-resolution upsampling for localization
-        self.loc_upsampler = nn.Sequential(
-            nn.Conv2d(base_filters, base_filters * 4, kernel_size=3, padding=1),
-            nn.PixelShuffle(2),  # x2 upsampling
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_filters, base_filters * 4, kernel_size=3, padding=1),
-            nn.PixelShuffle(2),  # x2 upsampling
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_filters, base_filters * 4, kernel_size=3, padding=1),
-            nn.PixelShuffle(2),  # x2 upsampling
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_filters, 1, kernel_size=1),
-            nn.Sigmoid()  # Probability map for particle positions
-        )
+        self.loc_upsampler = super_resolution_head(base_filters, upsample_factor)
 
         # Association branch (tracking)
         self.assoc_decoders = nn.ModuleList()
@@ -664,16 +669,7 @@ class AttentiveParticleTracker(nn.Module):
             dec_in = out_channels
 
         # Position prediction branch
-        self.position_upsampler = nn.Sequential(
-            nn.Conv2d(base_filters, base_filters * 4, kernel_size=3, padding=1),
-            nn.PixelShuffle(2),  # x2 upsampling
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_filters, base_filters * 4, kernel_size=3, padding=1),
-            nn.PixelShuffle(2),  # x2 upsampling
-            nn.ReLU(inplace=True),
-            nn.Conv2d(base_filters, 1, kernel_size=1),
-            nn.Sigmoid()  # Probability map for particle positions
-        )
+        self.position_upsampler = super_resolution_head(base_filters, upsample_factor)
 
         # Tracking/embedding branch
         self.embedding_conv = nn.Sequential(
