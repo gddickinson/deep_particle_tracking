@@ -12,11 +12,20 @@ Top-level packages (run from the repo root; imports are `from simulator.x import
 | `simulator/noise_models.py` | `PoissonNoise`, `GaussianNoise`, `MixedNoise`, `EMCCDNoise`, `sCMOSNoise`, `BackgroundNoise` |
 | `simulator/motion_models.py` | `BrownianMotion`, `DirectedMotion`, `AnomalousDiffusion`, `ConfinedDiffusion`, `ActiveTransport` (class versions; the GUI uses ParticleGenerator) |
 | `simulator/movie.py` | `simulate_movie(seed, **params)` = the Simulation tab pipeline (GUI and web call it); `noise_levels` / `add_noise` = the one SNR definition (also used by SimulatedParticleDataset); `gt_tracks`; `DEFAULTS` |
-| `models/network.py` | `ParticleTrackerModel` (U-Net + ConvLSTM), `DualBranchParticleTracker`, `AttentiveParticleTracker`, `create_model` |
-| `models/losses.py` | `FocalLoss`, `DistanceTransformLoss`, `EmbeddingLoss`, `HungarianMatchingLoss`, `CombinedLoss`, `TemporalEmbeddingLoss` |
+| `models/network.py` | `create_model('simple' / 'dual' / 'attentive')`; re-exports the classes below |
+| `models/blocks.py` | `ConvBlock`, `EncoderBlock`, `DecoderBlock`, `ConvLSTMCell`, `super_resolution_head` |
+| `models/tracker_simple.py` | `ParticleTrackerModel` (U-Net + ConvLSTM) |
+| `models/tracker_dual.py` | `DualBranchParticleTracker` (shared encoder + ConvLSTM; localisation and association decoders) |
+| `models/tracker_attentive.py` | `AttentiveParticleTracker` (temporal multi-head attention at the bottleneck) |
+| `models/losses.py` | `CombinedLoss` (trainer's loss); re-exports the component losses below |
+| `models/loss_localization.py` | `FocalLoss`, `DistanceTransformLoss` |
+| `models/loss_embedding.py` | `EmbeddingLoss`, `TemporalEmbeddingLoss` |
+| `models/loss_matching.py` | `HungarianMatchingLoss` |
 | `training/data_loader.py` | `ParticleDataset`, `SimulatedParticleDataset` (own particle/PSF loop, noise via `simulator.movie.add_noise` at a random SNR per frame), transforms, `create_dataloaders` |
 | `training/trainer.py` | `Trainer`, `TrainingManager` (checkpoints to `checkpoints/<id>/best.pth`) |
-| `prediction/inference.py` | `ParticlePredictor` (sliding windows of the trained length, embedding linking), `PredictionManager` (PyTorch); delegates to postprocess.py / preprocess.py, re-exports `MetricsCalculator` |
+| `prediction/inference.py` | re-exports `ParticlePredictor`, `PredictionManager`, `MetricsCalculator` (old import path) |
+| `prediction/predictor.py` | `ParticlePredictor` (sliding windows of the trained length, embedding linking; PyTorch); delegates to postprocess.py / preprocess.py |
+| `prediction/manager.py` | `PredictionManager` (predictor registry, background jobs, saving results) |
 | `prediction/postprocess.py` | `detect_peaks` (threshold + local max within `nms_radius`), `link_particles` (Hungarian, no gap closing), `link_particles_with_embeddings` (embedding-distance cost, position gating) — torch-free |
 | `prediction/metrics.py` | `MetricsCalculator` (precision/recall/F1, MOTA/MOTP, ID switches) — torch-free |
 | `prediction/preprocess.py` | `normalize_intensity`: [0, 1] floats kept, 8-bit /255, other ranges by percentiles (median -> 0, 99.99th -> 1) |
@@ -30,7 +39,7 @@ Top-level packages (run from the repo root; imports are `from simulator.x import
 | `run_web.py` | starts uvicorn on 127.0.0.1:8201 |
 | `web/app.py` | FastAPI: `/api/info`, `/params`, `/method`, `/benchmark`, `/demo` (exported to the static site), POST `/score`; local-only `/models`, POST `/predict` |
 | `web/benchmark.py` | precomputed baseline sweeps (SNR × noise model, density) and the seed-42 demo; `measured_snr` |
-| `web/method_info.py` | network / loss names, docstrings and defaults read with `ast` (no PyTorch) |
+| `web/method_info.py` | network / loss names, docstrings and defaults read with `ast` from network.py / losses.py and the modules they re-export (no PyTorch) |
 | `web/local_models.py` | checkpoint discovery and `predict` (ParticlePredictor vs baseline on one movie) |
 | `web/static/sim_engine.js` | JS port of `simulate_movie` (NumPy RNG via `np_random.js`, float32 steps) |
 | `web/static/track_engine.js` | JS ports of score map, `detect_peaks`, `link_particles`, `MetricsCalculator`, `linear_sum_assignment`, gaussian/maximum filters |

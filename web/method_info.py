@@ -1,7 +1,8 @@
 """Method facts for the web app, read from the source with `ast` (no PyTorch import needed).
 
-Network classes and loss functions: name, first docstring paragraph and __init__ defaults, from
-models/network.py and models/losses.py; the create_model names; the trainer's default loss.
+Network classes and loss functions: name, first docstring paragraph and __init__ defaults, from the modules
+models/network.py and models/losses.py re-export (listed in their __all__ order); the create_model names; the
+trainer's default loss.
 """
 import ast
 from functools import lru_cache
@@ -34,13 +35,28 @@ def _classes(path: Path, base: str):
         if isinstance(node, ast.ClassDef) and any(ast.unparse(b) == base for b in node.bases):
             init = next((n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == '__init__'), None)
             out.append({'name': node.name, 'doc': _doc(node), 'defaults': _defaults(init) if init else {},
-                        'line': node.lineno})
+                        'line': node.lineno, 'file': str(path.relative_to(ROOT))})
+    return out, tree
+
+
+def _package_classes(path: Path, base: str):
+    """Classes defined in `path` and in the models.* modules it imports from, ordered as in its __all__."""
+    tree = ast.parse(path.read_text())
+    files = [path]
+    order = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and (node.module or '').startswith('models.'):
+            files.append(ROOT / (node.module.replace('.', '/') + '.py'))
+        if isinstance(node, ast.Assign) and any(getattr(t, 'id', '') == '__all__' for t in node.targets):
+            order = ast.literal_eval(node.value)
+    out = [c for f in files for c in _classes(f, base)[0]]
+    out.sort(key=lambda c: order.index(c['name']) if c['name'] in order else len(order))
     return out, tree
 
 
 @lru_cache(maxsize=1)
 def method_info() -> dict:
-    nets, tree = _classes(ROOT / 'models' / 'network.py', 'nn.Module')
+    nets, tree = _package_classes(ROOT / 'models' / 'network.py', 'nn.Module')
     factory = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == 'create_model':
@@ -49,7 +65,7 @@ def method_info() -> dict:
                     key = ast.literal_eval(sub.test.comparators[0])
                     call = sub.body[0].value
                     factory[key] = call.func.id
-    losses, _ = _classes(ROOT / 'models' / 'losses.py', 'nn.Module')
+    losses, _ = _package_classes(ROOT / 'models' / 'losses.py', 'nn.Module')
     return {'networks': nets, 'create_model': factory, 'losses': losses,
             'trainer_loss': 'CombinedLoss (FocalLoss alpha 0.25, gamma 2 for localisation + EmbeddingLoss margin 1 '
                             'for tracking), as set in training/trainer.py and models/losses.py'}

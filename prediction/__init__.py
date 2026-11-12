@@ -1,7 +1,7 @@
 """Prediction package.
 
 Contents:
-- inference.py   ParticlePredictor, PredictionManager (need PyTorch)
+- inference.py   re-exports ParticlePredictor (predictor.py) and PredictionManager (manager.py); need PyTorch
 - postprocess.py detect_peaks, link_particles (numpy/scipy)
 - metrics.py     MetricsCalculator (numpy/scipy)
 - classical.py   classical (non-deep) baseline detector/tracker for comparison

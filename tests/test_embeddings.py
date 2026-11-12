@@ -21,7 +21,7 @@ def test_embedding_cost_decides_within_the_gate():
 def test_tiny_model_returns_and_uses_embeddings(tmp_path, monkeypatch):
     torch = pytest.importorskip('torch')
     from models.network import create_model
-    from prediction import inference
+    from prediction import predictor as inference  # ParticlePredictor lives in prediction/predictor.py
     from prediction.inference import ParticlePredictor
     cfg = {'base_filters': 4, 'depth': 2, 'num_frames': 3, 'embedding_dim': 6}
     model = create_model('simple', **cfg)
