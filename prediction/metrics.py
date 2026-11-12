@@ -186,8 +186,9 @@ class MetricsCalculator:
             matched_gt_indices = set(gt_indices[dist_matrix[gt_indices, pred_indices] <= distance_threshold])
             total_fn += len(gt_positions) - len(matched_gt_indices)
 
-            # Update previous assignments
-            prev_assignments = current_assignments
+            # Remember each ground-truth particle's last correspondence, also across frames where it is
+            # not matched (CLEAR MOT), so a new identity after a blink counts as a switch
+            prev_assignments.update(current_assignments)
 
         # Calculate metrics
         mota = 1 - (total_fp + total_fn + total_id_switches) / total_gt if total_gt > 0 else 0.0
