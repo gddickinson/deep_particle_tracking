@@ -43,8 +43,11 @@ class MetricsCalculator:
         # Compute distance matrix
         dist_matrix = cdist(gt_positions, pred_positions)
 
-        # Find matches
-        gt_indices, pred_indices = linear_sum_assignment(dist_matrix)
+        # Find matches; pairs beyond the threshold get a large cost so the assignment maximises the
+        # number of matches within the threshold (as calculate_tracking_metrics does)
+        dist_matrix_thresholded = dist_matrix.copy()
+        dist_matrix_thresholded[dist_matrix > distance_threshold] = 1e6
+        gt_indices, pred_indices = linear_sum_assignment(dist_matrix_thresholded)
 
         # Count true positives, false positives, and false negatives
         tp = 0
