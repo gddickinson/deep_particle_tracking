@@ -19,13 +19,16 @@ logger = logging.getLogger(__name__)
 
 
 def detect_peaks(prob_map: np.ndarray, threshold: float, nms_radius: int) -> np.ndarray:
-    """Positions (N, 2) as (y, x) of pixels above threshold that are maxima of their neighbourhood."""
+    """Positions (N, 2) as (y, x) of pixels above threshold that are the maximum within nms_radius pixels
+    (square window of 2*nms_radius + 1). Equal values on a plateau are all kept."""
     if prob_map.ndim > 2:
         logger.warning(f"Probability map has {prob_map.ndim} dimensions, flattening to 2D")
         while prob_map.ndim > 2:
             prob_map = prob_map[0]
     binary_map = prob_map > threshold
-    local_max = maximum_filter(prob_map, size=nms_radius)
+    # Window of 2r+1 pixels so maxima closer than nms_radius pixels are suppressed (size=nms_radius was a
+    # window of r pixels, i.e. a suppression radius of about r/2).
+    local_max = maximum_filter(prob_map, size=2 * int(nms_radius) + 1)
     maxima = (prob_map == local_max) & binary_map
     y_coords, x_coords = np.where(maxima)
     if len(y_coords) > 0:
