@@ -100,7 +100,9 @@ def simulate_movie(seed: Optional[int] = None, **params) -> Dict:
         else:
             psf_image = np.zeros((height, width), dtype=np.float32)
 
-        signal_max = np.max(psf_image) if np.max(psf_image) > 0 else 1.0
+        # Background = brightest PSF pixel / SNR; the Background Level setting is used only for frames
+        # with no visible particle (before, signal_max was set to 1.0 there, so it was never used)
+        signal_max = float(np.max(psf_image))
         bg_level = signal_max / snr if signal_max > 0 else background
         noisy = noise_model.apply(psf_image + bg_level) - bg_level
         frames.append(np.clip(noisy, 0, 1))
