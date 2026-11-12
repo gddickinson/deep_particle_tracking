@@ -11,7 +11,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
 from models.network import create_model
-from prediction.postprocess import detect_peaks, link_particles
+from prediction.postprocess import detect_peaks, link_particles, link_particles_with_embeddings
 from prediction.preprocess import normalize_intensity
 from utils.device_manager import device_manager
 from utils.thread_manager import thread_manager
@@ -209,108 +209,19 @@ class ParticlePredictor:
     def _link_particles_with_embeddings(self,
                                       positions: List[np.ndarray],
                                       embeddings: List[np.ndarray],
-                                      max_distance: float = 20.0,
-                                      embedding_weight: float = 0.5) -> List[np.ndarray]:
+                                      max_distance: float = 20.0) -> List[np.ndarray]:
         """
-        Link particles across frames using both position and embedding similarity.
-
-        Args:
-            positions: List of position arrays, one per frame
-            embeddings: List of embedding arrays, one per frame
-            max_distance: Maximum spatial distance for linking
-            embedding_weight: Weight of embedding similarity vs. spatial distance
-
-        Returns:
-            List of track arrays, each with shape (num_frames, 2)
+        Link particles by the network's embeddings (prediction/postprocess.py link_particles_with_embeddings):
+        each detection takes the embedding vector at its pixel from that frame's (E, H, W) embedding map; the cost
+        is the embedding distance and positions only gate pairs to within max_distance.
         """
-        num_frames = len(positions)
-
-        # Initialize tracks with particles from first frame
-        tracks = []
-        for pos in positions[0]:
-            # Create track with first position and NaN for remaining frames
-            track = np.full((num_frames, 2), np.nan)
-            track[0] = pos
-            tracks.append(track)
-
-        # For frames without corresponding embeddings, fall back to position-only linking
-        if len(embeddings) != num_frames:
+        if len(embeddings) != len(positions):
             return self._link_particles(positions, max_distance)
-
-        # Process each subsequent frame
-        for frame_idx in range(1, num_frames):
-            # Current positions and embeddings
-            curr_positions = positions[frame_idx]
-            curr_embeddings = embeddings[frame_idx]
-
-            # Skip if no particles in current frame
-            if len(curr_positions) == 0:
-                continue
-
-            # Find active tracks (not terminated)
-            active_tracks = []
-            active_track_indices = []
-
-            for track_idx, track in enumerate(tracks):
-                # Check if track is active in previous frame
-                if not np.isnan(track[frame_idx-1, 0]):
-                    active_tracks.append(track[frame_idx-1])
-                    active_track_indices.append(track_idx)
-
-            # Skip if no active tracks
-            if len(active_tracks) == 0:
-                # Add new tracks for all particles
-                for pos in curr_positions:
-                    # Create track with NaN for previous frames and current position
-                    track = np.full((num_frames, 2), np.nan)
-                    track[frame_idx] = pos
-                    tracks.append(track)
-
-                continue
-
-            # Convert to array
-            active_tracks = np.array(active_tracks)
-
-            # Compute distance matrix
-            dist_matrix = cdist(active_tracks, curr_positions)
-
-            # Set distances beyond max_distance to a large value
-            dist_matrix[dist_matrix > max_distance] = 1e6
-
-            # Solve assignment problem
-            track_indices, particle_indices = linear_sum_assignment(dist_matrix)
-
-            # Mark assigned particles
-            assigned_particles = set()
-
-            # Update assigned tracks
-            for track_idx, particle_idx in zip(track_indices, particle_indices):
-                # Check if distance is within threshold
-                if dist_matrix[track_idx, particle_idx] <= max_distance:
-                    # Update track
-                    tracks[active_track_indices[track_idx]][frame_idx] = curr_positions[particle_idx]
-                    assigned_particles.add(particle_idx)
-
-            # Create new tracks for unassigned particles
-            for particle_idx in range(len(curr_positions)):
-                if particle_idx not in assigned_particles:
-                    # Create track with NaN for previous frames and current position
-                    track = np.full((num_frames, 2), np.nan)
-                    track[frame_idx] = curr_positions[particle_idx]
-                    tracks.append(track)
-
-        # Remove tracks that are too short
-        min_length = 3  # Minimum track length
-        valid_tracks = []
-
-        for track in tracks:
-            # Count non-NaN positions
-            valid_positions = np.sum(~np.isnan(track[:, 0]))
-
-            if valid_positions >= min_length:
-                valid_tracks.append(track)
-
-        return valid_tracks
+        descriptors = []
+        for pos, emb in zip(positions, embeddings):
+            yx = np.asarray(pos, dtype=int).reshape(-1, 2)
+            descriptors.append(emb[:, yx[:, 0], yx[:, 1]].T if len(yx) else np.zeros((0, emb.shape[0])))
+        return link_particles_with_embeddings(positions, descriptors, max_distance)
 
 class PredictionManager:
     """Manager for handling prediction jobs with thread management."""

@@ -406,22 +406,17 @@ class ParticleTrackerModel(nn.Module):
             skip_features = skip_connections[skip_idx][-1]
             features = decoder(features, skip_features)
 
-        # Generate position probability map
+        # Position map and per-pixel embeddings for the last frame of the input sequence
         positions = self.final_conv(features)
-
-        # Generate embeddings
         embeddings = self.embedding_conv(features)
 
-        # Final convolution to get output
-        output = self.final_conv(features)
+        # Input has a frame dimension, so the outputs get one too: (batch, 1, channels, height, width)
+        if x.dim() == 5:
+            positions = positions.unsqueeze(1)
+            embeddings = embeddings.unsqueeze(1)
 
-        # For compatibility, ensure outputs have same dimensionality as inputs
-        # If input had 5 dimensions (with frame dim), output should too
-        if x.dim() == 5 and output.dim() == 4:
-            # Add frame dimension at position 1
-            output = output.unsqueeze(1)
-
-        return output
+        # As documented: both outputs (the embeddings were computed but only the position map was returned)
+        return {'positions': positions, 'embeddings': embeddings}
 
 class DualBranchParticleTracker(nn.Module):
     """

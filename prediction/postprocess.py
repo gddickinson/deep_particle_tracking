@@ -5,6 +5,8 @@ classical baseline. Torch-free (numpy/scipy only).
 detect_peaks: threshold a probability map and keep local maxima -> integer (y, x) pixel positions.
 link_particles: Hungarian assignment between consecutive frames within max_distance; tracks that
 end are not resumed (no gap closing); tracks shorter than min_length positions are dropped.
+link_particles_with_embeddings: the same, but the assignment cost is the distance between per-detection
+embedding vectors, with positions only gating which pairs are allowed (within max_distance).
 """
 
 import logging
@@ -76,4 +78,50 @@ def link_particles(positions: List[np.ndarray], max_distance: float, min_length:
                 track[frame_idx] = curr_positions[particle_idx]
                 tracks.append(track)
 
+    return [t for t in tracks if np.sum(~np.isnan(t[:, 0])) >= min_length]
+
+
+def link_particles_with_embeddings(positions: List[np.ndarray], descriptors: List[np.ndarray], max_distance: float,
+                                   min_length: int = 3) -> List[np.ndarray]:
+    """Link detections by embedding similarity: cost = Euclidean distance between the track's last embedding and
+    the detection's embedding; pairs further apart than max_distance pixels are not allowed (position gating).
+
+    Args:
+        positions: per frame, (N_t, 2) (y, x) detections
+        descriptors: per frame, (N_t, E) embedding vectors of those detections
+    Returns tracks as link_particles does.
+    """
+    num_frames = len(positions)
+    tracks, last_desc = [], []
+
+    def new_track(t, pos, desc):
+        track = np.full((num_frames, 2), np.nan)
+        track[t] = pos
+        tracks.append(track)
+        last_desc.append(desc)
+
+    for pos, desc in zip(positions[0], descriptors[0]):
+        new_track(0, pos, desc)
+    for t in range(1, num_frames):
+        cur, cur_desc = np.asarray(positions[t], float), np.asarray(descriptors[t], float)
+        if len(cur) == 0:
+            continue
+        active = [k for k, tr in enumerate(tracks) if not np.isnan(tr[t - 1, 0])]
+        if not active:
+            for p, d in zip(cur, cur_desc):
+                new_track(t, p, d)
+            continue
+        gate = cdist(np.array([tracks[k][t - 1] for k in active]), cur) <= max_distance
+        cost = cdist(np.array([last_desc[k] for k in active]), cur_desc)
+        cost[~gate] = 1e6
+        rows, cols = linear_sum_assignment(cost)
+        assigned = set()
+        for r, c in zip(rows, cols):
+            if gate[r, c]:
+                tracks[active[r]][t] = cur[c]
+                last_desc[active[r]] = cur_desc[c]
+                assigned.add(c)
+        for c in range(len(cur)):
+            if c not in assigned:
+                new_track(t, cur[c], cur_desc[c])
     return [t for t in tracks if np.sum(~np.isnan(t[:, 0])) >= min_length]
