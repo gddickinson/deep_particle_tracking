@@ -11,7 +11,7 @@ import numpy as np
 
 from prediction.classical import BASELINE_DEFAULTS, run_baseline
 from prediction.metrics import MetricsCalculator
-from simulator.movie import gt_tracks, simulate_movie
+from simulator.movie import PEAK_SIGNAL, gt_tracks, simulate_movie
 
 MATCH_PX = 5.0
 SIZE, FRAMES, SEEDS = 128, 15, (1, 2)
@@ -22,26 +22,23 @@ DEMO_SEED = 42
 
 
 def measured_snr(result: Dict) -> float:
-    """Peak SNR on the (clipped) frames, as sim_engine.js measuredSnr: mean pixel value at the visible particles'
-    rounded positions minus the background mean, over the background SD (every 2nd pixel further than R from all
-    visible particles, R = 4 * max(psf_sigma, airy_radius) + 2)."""
-    p, frames = result['params'], result['frames']
-    H, W = frames.shape[1:]
+    """Measured SNR by the setting's own definition (simulator/movie.py noise_levels): PEAK_SIGNAL over the SD of
+    the unclipped frames at the background (every 2nd pixel further than R from all visible particles,
+    R = 4 * max(psf_sigma, airy_radius) + 2). As sim_engine.js measuredSnr."""
+    p, raw = result['params'], result['raw_frames']
+    H, W = raw.shape[1:]
     R = 4 * max(p['psf_sigma'], p['airy_radius']) + 2
     yy, xx = np.mgrid[0:H:2, 0:W:2]
-    bg, peaks = [], []
-    for f, g in zip(frames, result['gt']):
+    bg = []
+    for f, g in zip(raw, result['gt']):
         far = np.ones(yy.shape, bool)
         for _, y, x in g:
-            iy, ix = int(round(y)), int(round(x))
-            if 0 <= iy < H and 0 <= ix < W:
-                peaks.append(float(f[iy, ix]))
             far &= (yy - y) ** 2 + (xx - x) ** 2 >= R * R
         bg.extend(f[0:H:2, 0:W:2][far].astype(float).tolist())
-    if not bg or not peaks:
+    if not bg:
         return float('nan')
     sd = float(np.std(bg))
-    return (np.mean(peaks) - np.mean(bg)) / sd if sd > 0 else float('inf')
+    return PEAK_SIGNAL / sd if sd > 0 else float('inf')
 
 
 def score(result: Dict, **baseline) -> Dict:

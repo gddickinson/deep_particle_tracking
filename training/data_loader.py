@@ -14,6 +14,11 @@ import logging
 from PIL import Image
 import random
 
+try:
+    from simulator.movie import add_noise
+except ImportError:  # the dataset falls back to random data without the simulator
+    add_noise = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,6 +242,12 @@ class SimulatedParticleDataset(Dataset):
             else:
                 raise ValueError(f"Unsupported PSF model: {psf_model}")
 
+            # Noise model name for simulator.movie.add_noise, which builds the noise per frame from the SNR
+            if add_noise is None:
+                raise ImportError("simulator.movie not available")
+            self.noise_name = {'poisson': 'Poisson', 'gaussian': 'Gaussian',
+                               'poisson_gaussian': 'Poisson + Gaussian'}.get(noise_model)
+
             # Set up noise model
             if noise_model == 'poisson':
                 self.noise_model_obj = PoissonNoise(scaling_factor=100.0)
@@ -376,13 +387,10 @@ class SimulatedParticleDataset(Dataset):
             else:
                 psf_image = np.zeros(self.frame_size, dtype=np.float32)
 
-            # Apply noise
+            # Apply noise at a random SNR, defined as in the Simulation tab (simulator/movie.py noise_levels:
+            # peak signal above background / noise SD at the background), clipped to [0, 1]
             snr = np.random.uniform(*self.snr_range)
-            background = np.max(psf_image) / snr if np.max(psf_image) > 0 else 0.1
-            noisy_image = self.noise_model_obj.apply(psf_image + background) - background
-
-            # Clip to [0, 1] and add to frames
-            noisy_image = np.clip(noisy_image, 0, 1)
+            noisy_image, _ = add_noise(psf_image, self.noise_name, snr, read_noise=3.0)
             frames.append(noisy_image)
 
             # Create position target (binary mask with particle positions)

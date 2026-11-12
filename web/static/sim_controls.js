@@ -13,8 +13,7 @@ export const NUMERIC = {
   confinement_radius: ['Confinement radius', 0.5, ' px'],
   psf_sigma: ['Gaussian σ', 0.05, ' px'],
   airy_radius: ['Airy radius (first dark ring)', 0.05, ' px'],
-  snr: ['SNR setting', 0.5, ''],
-  background: ['Background level (empty frames)', 0.01, ''],
+  snr: ['SNR (peak / background noise SD)', 0.5, ''],
   read_noise: ['Read noise', 0.5, ' counts'],
   on_prob: ['On probability (off → on)', 0.05, ''],
   off_prob: ['Off probability (on → off)', 0.05, ''],
@@ -22,7 +21,7 @@ export const NUMERIC = {
 export const SHOWN = {
   motion: { Brownian: ['diffusion'], Directed: ['velocity', 'direction_change'], Confined: ['diffusion', 'confinement_strength', 'confinement_radius'] },
   psf: { Gaussian: ['psf_sigma'], 'Airy Disk': ['airy_radius'] },
-  noise: { Poisson: ['snr', 'background'], Gaussian: ['snr', 'background'], 'Poisson + Gaussian': ['snr', 'background', 'read_noise'] },
+  noise: { Poisson: ['snr'], Gaussian: ['snr'], 'Poisson + Gaussian': ['snr', 'read_noise'] },
 };
 
 function seg(host, id, label, options, value, onPick) {

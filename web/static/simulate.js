@@ -10,7 +10,7 @@ const WEB_START = { size: 128, num_frames: 30, num_particles: 20 };
 const PRESETS = {
   'Simulation tab defaults': {},
   'Dense': { num_particles: 150 },
-  'Low SNR (Gaussian noise)': { noise: 'Gaussian', snr: 40 },
+  'Low SNR': { snr: 2 },
   'Blinking': { blinking: true },
   'Directed transport': { motion: 'Directed', velocity: 5 },
   'Airy disk PSF': { psf: 'Airy Disk', size: 96 },
@@ -76,7 +76,7 @@ route('simulate', async (args, query) => {
       <div>density<b>${(n / area * 100).toFixed(1)} per 100 µm²</b></div>
       <div>field of view<b>${(p.size * PIXEL_UM).toFixed(1)} × ${(p.size * PIXEL_UM).toFixed(1)} µm</b></div>
       <div>SNR setting<b>${p.snr}</b></div>
-      <div title="peak minus background mean over background SD, measured on the frames">measured peak SNR<b>${f3(s.measured_snr)}</b></div>
+      <div title="peak signal 1.0 over the background noise SD measured on the unclipped frames">measured SNR<b>${f3(s.measured_snr)}</b></div>
       <div>visible in this frame<b>${movie.gt[t]?.length ?? 0} of ${n}</b></div>`;
     document.getElementById('bl').innerHTML = `<h3>Baseline vs ground truth (≤ 5 px)</h3>
       <div>detection precision<b>${f3(s.precision)}</b></div><div>detection recall<b>${f3(s.recall)}</b></div>

@@ -32,7 +32,8 @@ MOVIES = [
              confinement_strength=5.0, confinement_radius=3.0, noise='Poisson + Gaussian', blinking=True)),
     (4, dict(width=24, height=20, num_frames=4, num_particles=4, psf='Airy Disk', airy_radius=2.0, psf_sigma=1.5,
              blinking=True, on_prob=0.5, off_prob=0.5, snr=3.0)),
-    (5, dict(width=16, height=16, num_frames=3, num_particles=0, background=0.2)),
+    (5, dict(width=16, height=16, num_frames=3, num_particles=0, noise='Poisson + Gaussian', snr=2.0)),
+    (9, dict(width=40, height=40, num_frames=3, num_particles=6, noise='Poisson + Gaussian', snr=50.0, psf_sigma=0.7)),
     (6, dict(width=30, height=30, num_frames=4, num_particles=8, motion='Directed', velocity=8.0, noise='Poisson + Gaussian',
              read_noise=0.0, psf_sigma=2.0)),
 ]

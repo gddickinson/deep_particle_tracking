@@ -26,19 +26,20 @@ route('benchmark', async () => {
   ${B.frames} frames, Brownian motion (D 0.1 µm²/s), Gaussian PSF σ 1 px, no blinking.</p>
 
   <h2>SNR</h2>
-  <p>${B.snr_sweep.particles} particles per movie. The SNR setting is the Simulation tab's: the background is set to
-  (brightest PSF pixel) / SNR, and for Gaussian noise the noise SD is 10 / SNR. What that means for the image depends on
-  the noise model, so the measured peak SNR (spot amplitude over background SD on the frames) is plotted too.</p>
+  <p>${B.snr_sweep.particles} particles per movie. SNR has one definition everywhere (simulator, Simulation tab and
+  training dataset): peak signal above background (a particle of intensity 1) divided by the noise SD at the
+  background. For Poisson noise that SD is √(background + read noise²) photons at 100 photons per unit, so the
+  simulator picks the background that gives the requested SNR; for Gaussian noise it sets the SD directly.</p>
   <div class="two">
     <div><h3>Detection F1</h3>${lineChart({ series: bySnr('f1'), xlabel: 'SNR setting', ylabel: 'detection F1', xlog: true, ymin: 0, ymax: 1 })}</div>
     <div><h3>Tracking MOTA</h3>${lineChart({ series: bySnr('mota'), xlabel: 'SNR setting', ylabel: 'MOTA', xlog: true, ymin: Math.min(0, ...B.snr_sweep.rows.map(r => r.mota)), ymax: 1 })}</div>
   </div>
   <div class="two">
-    <div><h3>Measured peak SNR</h3>${lineChart({ series: bySnr('measured_snr'), xlabel: 'SNR setting', ylabel: 'measured peak SNR', xlog: true, ylog: true })}</div>
-    <div class="callout a" style="align-self:center">With Poisson noise (photon scaling 100) the SNR setting only changes
-    the background, so even a setting of 1 gives a measured SNR near 10 and the baseline barely notices. With Gaussian
-    noise (SD 10 / SNR on spots of peak 0.5–1) the image SNR is roughly the setting divided by 10, so settings below
-    about 20 bury the particles. Compare the same setting across noise models with care.</div>
+    <div><h3>Measured SNR</h3>${lineChart({ series: bySnr('measured_snr'), xlabel: 'SNR setting', ylabel: 'measured SNR', xlog: true, ylog: true })}</div>
+    <div class="callout a" style="align-self:center">The measured SNR (1 over the SD of the unclipped background) follows
+    the setting for every noise model, so the same setting means the same image quality. Exception: with Poisson +
+    Gaussian noise the read noise alone (3 counts) caps the SNR at 100 / 3 ≈ 33, so the setting of 50 gives 33.
+    Particles have intensities 0.5–1, so the dimmest are at half the stated SNR.</div>
   </div>
   <details><summary class="mono small">Table: SNR sweep</summary><div class="scroll"><table>
     <tr><th>noise</th><th class="num">SNR setting</th><th class="num">measured SNR</th><th class="num">precision</th><th class="num">recall</th><th class="num">F1</th><th class="num">MOTA</th><th class="num">MOTP px</th><th class="num">ID sw.</th></tr>

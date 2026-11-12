@@ -2,14 +2,15 @@
 Synthetic movie generator: the Simulation tab's pipeline as a pure (Qt-free, torch-free) function.
 
 `simulate_movie` runs, in this order, exactly what SimulationTab.run_simulation did: random particles,
-one motion model, optional blinking, a PSF image per frame, the noise model, clipping to [0, 1], and the
+one motion model, optional blinking, a PSF image per frame, noise at the requested SNR (noise_levels: the
+one SNR definition, shared with SimulatedParticleDataset), clipping to [0, 1], and the
 per-pixel position / track-id targets used for training. The GUI and the web app both call it.
 
 Coordinates are (y, x) in pixels with the pixel centre at integer coordinates (row y, column x), as in
 the PSF models. Physical units: ParticleGenerator's pixel size (0.1 um) and frame interval (0.1 s).
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -23,12 +24,49 @@ DEFAULTS = {
     'motion': 'Brownian', 'diffusion': 0.1, 'velocity': 1.0, 'direction_change': 0.1,
     'confinement_strength': 1.0, 'confinement_radius': 10.0,
     'psf': 'Gaussian', 'psf_sigma': 1.0, 'airy_radius': 1.22,
-    'noise': 'Poisson', 'snr': 10.0, 'background': 0.1, 'read_noise': 3.0,
+    'noise': 'Poisson', 'snr': 10.0, 'read_noise': 3.0,
     'blinking': False, 'on_prob': 0.7, 'off_prob': 0.2,
 }
 MOTIONS = ('Brownian', 'Directed', 'Confined')
+# Photons per image unit (PoissonNoise / MixedNoise scaling) and the amplitude of the brightest particle
+# (intensity_range upper bound): the reference "peak signal" of the SNR definition.
+PHOTONS_PER_UNIT = 100.0
+PEAK_SIGNAL = 1.0
 PSFS = ('Gaussian', 'Airy Disk')
 NOISES = ('Poisson', 'Gaussian', 'Poisson + Gaussian')
+
+
+def noise_levels(noise: str, snr: float, read_noise: float = 0.0) -> Tuple[float, float]:
+    """The one SNR definition: SNR = peak signal above background / noise SD at the background.
+
+    Peak signal = PEAK_SIGNAL (a particle of intensity 1). Returns (background, noise_sd) in image units.
+    Gaussian noise: SD = peak / SNR, no background needed. Poisson: the background b gives a photon SD
+    sqrt(b * PHOTONS_PER_UNIT), so b * PHOTONS_PER_UNIT = (PHOTONS_PER_UNIT * peak / SNR)^2. Poisson + Gaussian:
+    sqrt(b * PHOTONS_PER_UNIT + read_noise^2) photons, so the background makes up what read noise does not; if read
+    noise alone exceeds the target (SNR above PHOTONS_PER_UNIT * peak / read_noise) the background is 0 and the
+    image SNR is that ceiling.
+    """
+    sd = PEAK_SIGNAL / snr
+    if noise == 'Gaussian':
+        return 0.0, sd
+    var_photons = (sd * PHOTONS_PER_UNIT) ** 2
+    if noise == 'Poisson + Gaussian':
+        var_photons -= read_noise ** 2
+    return max(var_photons, 0.0) / PHOTONS_PER_UNIT, sd
+
+
+def add_noise(psf_image: np.ndarray, noise: str, snr: float, read_noise: float = 0.0) -> Tuple[np.ndarray, np.ndarray]:
+    """Camera noise at the given SNR on a noise-free PSF image; the background is added for the shot noise and
+    subtracted again. Returns (frame clipped to [0, 1], raw frame before clipping)."""
+    bg, sd = noise_levels(noise, snr, read_noise)
+    if noise == 'Poisson':
+        model = PoissonNoise(scaling_factor=PHOTONS_PER_UNIT)
+    elif noise == 'Gaussian':
+        model = GaussianNoise(sigma=sd)
+    else:
+        model = MixedNoise(photon_scaling=PHOTONS_PER_UNIT, read_noise=read_noise, offset=0.0)
+    raw = model.apply(psf_image + bg) - bg
+    return np.clip(raw, 0, 1), raw
 
 
 def simulate_movie(seed: Optional[int] = None, **params) -> Dict:
@@ -39,7 +77,7 @@ def simulate_movie(seed: Optional[int] = None, **params) -> Dict:
         **params: any key of DEFAULTS.
 
     Returns:
-        dict with 'frames' (T, H, W) float in [0, 1], 'positions' (T, H, W) float32 0/1 targets,
+        dict with 'frames' (T, H, W) float in [0, 1], 'raw_frames' (the same before clipping), 'positions' (T, H, W) float32 0/1 targets,
         'track_ids' (T, H, W) int32 (particle id + 1), 'gt' (list per frame of (n, 3) arrays
         [id, y, x] for the particles visible in that frame), 'generator' (the ParticleGenerator,
         whose particles hold the full (y, x) trajectories) and 'params' (the values used).
@@ -81,15 +119,7 @@ def simulate_movie(seed: Optional[int] = None, **params) -> Dict:
     else:
         psf_model = AiryDiskPSF(image_size=(height, width), airy_radius=p['airy_radius'])
 
-    snr, background = p['snr'], p['background']
-    if p['noise'] == 'Poisson':
-        noise_model = PoissonNoise(scaling_factor=100.0)
-    elif p['noise'] == 'Gaussian':
-        noise_model = GaussianNoise(sigma=10.0 / snr)
-    else:
-        noise_model = MixedNoise(photon_scaling=100.0, read_noise=p['read_noise'], offset=0.0)
-
-    frames, positions, track_ids, gt = [], [], [], []
+    frames, raw_frames, positions, track_ids, gt = [], [], [], [], []
     for frame_idx in range(num_frames):
         active = gen.get_active_particles(frame_idx)
         pos = [pt.get_position(frame_idx) for pt in active]
@@ -100,12 +130,9 @@ def simulate_movie(seed: Optional[int] = None, **params) -> Dict:
         else:
             psf_image = np.zeros((height, width), dtype=np.float32)
 
-        # Background = brightest PSF pixel / SNR; the Background Level setting is used only for frames
-        # with no visible particle (before, signal_max was set to 1.0 there, so it was never used)
-        signal_max = float(np.max(psf_image))
-        bg_level = signal_max / snr if signal_max > 0 else background
-        noisy = noise_model.apply(psf_image + bg_level) - bg_level
-        frames.append(np.clip(noisy, 0, 1))
+        frame, raw = add_noise(psf_image, p['noise'], p['snr'], p['read_noise'])
+        frames.append(frame)
+        raw_frames.append(raw)
 
         pos_target = np.zeros((height, width), dtype=np.float32)
         id_target = np.zeros((height, width), dtype=np.int32)
@@ -118,7 +145,7 @@ def simulate_movie(seed: Optional[int] = None, **params) -> Dict:
         track_ids.append(id_target)
         gt.append(np.array([[pid, y, x] for (y, x), pid in zip(pos, ids)], dtype=float).reshape(-1, 3))
 
-    return {'frames': np.stack(frames), 'positions': np.stack(positions), 'track_ids': np.stack(track_ids),
+    return {'frames': np.stack(frames), 'raw_frames': np.stack(raw_frames), 'positions': np.stack(positions), 'track_ids': np.stack(track_ids),
             'gt': gt, 'generator': gen, 'params': p}
 
 

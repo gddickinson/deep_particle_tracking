@@ -28,7 +28,7 @@ RANGES = {
     'width': [32, 256], 'height': [32, 256], 'num_frames': [2, 100], 'num_particles': [0, 300],
     'diffusion': [0.01, 10.0], 'velocity': [0.1, 10.0], 'direction_change': [0.0, 1.0],
     'confinement_strength': [0.1, 10.0], 'confinement_radius': [1.0, 100.0],
-    'psf_sigma': [0.5, 5.0], 'airy_radius': [0.5, 5.0], 'snr': [1.0, 50.0], 'background': [0.0, 1.0],
+    'psf_sigma': [0.5, 5.0], 'airy_radius': [0.5, 5.0], 'snr': [1.0, 50.0],
     'read_noise': [0.0, 20.0], 'on_prob': [0.0, 1.0], 'off_prob': [0.0, 1.0],
 }
 

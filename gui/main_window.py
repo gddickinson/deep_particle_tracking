@@ -370,14 +370,11 @@ class SimulationTab(QWidget):
         self.snr_spin = QDoubleSpinBox()
         self.snr_spin.setRange(1.0, 50.0)
         self.snr_spin.setValue(10.0)
+        self.snr_spin.setToolTip("Peak signal of the brightest particle above background / noise SD at the "
+                                 "background (simulator/movie.py noise_levels)")
         self.snr_spin.setSingleStep(0.5)
         noise_layout.addRow("Signal-to-Noise Ratio:", self.snr_spin)
 
-        self.background_spin = QDoubleSpinBox()
-        self.background_spin.setRange(0.0, 1.0)
-        self.background_spin.setValue(0.1)
-        self.background_spin.setSingleStep(0.01)
-        noise_layout.addRow("Background Level:", self.background_spin)
 
         self.read_noise_spin = QDoubleSpinBox()
         self.read_noise_spin.setRange(0.0, 20.0)
@@ -609,10 +606,8 @@ class SimulationTab(QWidget):
 
             self.noise_group.layout().addRow("Noise Model:", self.noise_combo)
             self.noise_group.layout().addRow("Signal-to-Noise Ratio:", self.snr_spin)
-            self.noise_group.layout().addRow("Background Level:", self.background_spin)
             self.noise_combo.show()
             self.snr_spin.show()
-            self.background_spin.show()
         elif noise_model == "Gaussian":
             for i in reversed(range(self.noise_group.layout().count())):
                 item = self.noise_group.layout().itemAt(i)
@@ -623,11 +618,9 @@ class SimulationTab(QWidget):
 
             self.noise_group.layout().addRow("Noise Model:", self.noise_combo)
             self.noise_group.layout().addRow("Signal-to-Noise Ratio:", self.snr_spin)
-            self.noise_group.layout().addRow("Background Level:", self.background_spin)
             self.noise_group.layout().addRow("Read Noise:", self.read_noise_spin)
             self.noise_combo.show()
             self.snr_spin.show()
-            self.background_spin.show()
             self.read_noise_spin.show()
         elif noise_model == "Poisson + Gaussian":
             for i in reversed(range(self.noise_group.layout().count())):
@@ -639,11 +632,9 @@ class SimulationTab(QWidget):
 
             self.noise_group.layout().addRow("Noise Model:", self.noise_combo)
             self.noise_group.layout().addRow("Signal-to-Noise Ratio:", self.snr_spin)
-            self.noise_group.layout().addRow("Background Level:", self.background_spin)
             self.noise_group.layout().addRow("Read Noise:", self.read_noise_spin)
             self.noise_combo.show()
             self.snr_spin.show()
-            self.background_spin.show()
             self.read_noise_spin.show()
 
     def update_blinking_params(self):
@@ -706,7 +697,6 @@ class SimulationTab(QWidget):
                 airy_radius=self.airy_radius_spin.value(),
                 noise=self.noise_combo.currentText(),
                 snr=self.snr_spin.value(),
-                background=self.background_spin.value(),
                 read_noise=self.read_noise_spin.value(),
                 blinking=self.blinking_check.isChecked(),
                 on_prob=self.on_prob_spin.value(),
@@ -880,7 +870,6 @@ class SimulationTab(QWidget):
                 'psf_model': self.psf_combo.currentText(),
                 'noise_model': self.noise_combo.currentText(),
                 'snr': self.snr_spin.value(),
-                'background': self.background_spin.value(),
                 'timestamp': timestamp
             }
 

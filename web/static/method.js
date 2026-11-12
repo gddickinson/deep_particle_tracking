@@ -34,9 +34,11 @@ route('method', async () => {
       <b>Confined</b>: Brownian steps plus a pull towards the start point growing as (distance / radius)².</p></div>
     <div class="panel"><h3>PSF</h3><p><b>Gaussian</b>: amplitude × exp(−r² / 2σ²), σ scaled by each particle's size (0.8–1.2).
       <b>Airy disk</b>: [2 J₁(v) / v]² with the first dark ring at the Airy radius. Amplitudes 0.5–1.</p></div>
-    <div class="panel"><h3>Noise</h3><p>Background = brightest PSF pixel / SNR (the Background Level setting for empty frames).
-      <b>Poisson</b>: shot noise at 100 photons per unit. <b>Gaussian</b>: additive, SD 10 / SNR.
-      <b>Poisson + Gaussian</b>: shot noise plus read noise (counts). Blinking: a two-state on/off Markov chain.</p></div>
+    <div class="panel"><h3>Noise</h3><p>SNR = peak signal above background (intensity 1) / noise SD at the background.
+      <b>Poisson</b>: shot noise at 100 photons per unit on a background chosen to give that SD.
+      <b>Gaussian</b>: additive, SD 1 / SNR. <b>Poisson + Gaussian</b>: shot noise plus read noise (counts); the
+      background makes up the rest. The background is subtracted again and frames are clipped to 0–1.
+      Blinking: a two-state on/off Markov chain.</p></div>
   </div>
   <p><a class="btn alt" href="#/simulate">Try it in the simulator</a></p>
 

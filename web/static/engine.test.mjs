@@ -2,7 +2,7 @@
 // (written by scripts/make_engine_fixture.py). Run: node web/static/engine.test.mjs
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { simulateMovie, besselJ1, gtTracks } from './sim_engine.js';
+import { simulateMovie, besselJ1, gtTracks, measuredSnr } from './sim_engine.js';
 import { runBaseline, scoreMap, linearSumAssignment, allMetrics, detectionMetrics, trackingMetrics } from './track_engine.js';
 
 const fx = JSON.parse(readFileSync(fileURLToPath(new URL('../../tests/fixtures/engine_fixture.json', import.meta.url)), 'utf8'));
@@ -30,9 +30,16 @@ for (const m of fx.movies) {
 // Windowed Gaussian spots give the same movie as whole-frame sums (bit for bit after noise)
 for (const [seed, prm] of [[11, { width: 80, height: 70, num_frames: 4, num_particles: 15, psf_sigma: 0.6, snr: 50 }],
   [12, { width: 64, height: 64, num_frames: 3, num_particles: 5, noise: 'Poisson + Gaussian', psf_sigma: 2.5, snr: 1 }],
-  [13, { width: 64, height: 64, num_frames: 3, num_particles: 5, noise: 'Gaussian', snr: 50 }]]) {
+  [13, { width: 64, height: 64, num_frames: 3, num_particles: 5, noise: 'Gaussian', snr: 50 }],
+  [14, { width: 80, height: 80, num_frames: 3, num_particles: 9, noise: 'Poisson + Gaussian', snr: 50, psf_sigma: 0.6 }]]) {
   const a = simulateMovie(seed, prm), b = simulateMovie(seed, prm, { full: true });
   a.frames.forEach((f, t) => { checks++; if (!f.every((v, i) => v === b.frames[t][i])) fail(`windowed PSF differs (seed ${seed} frame ${t})`); });
+}
+
+// One SNR definition: measured SNR (peak 1 over unclipped background SD) matches the setting
+for (const noise of ['Poisson', 'Gaussian', 'Poisson + Gaussian']) for (const snr of [1, 3, 10]) {
+  const m = measuredSnr(simulateMovie(3, { width: 128, height: 128, num_frames: 3, num_particles: 0, noise, snr }));
+  close(m.snr, snr, `measured SNR ${noise} ${snr}`, 0.03, 0);
 }
 
 // Baseline detector + linker + metrics on Python frames, and end-to-end on the JS movie
