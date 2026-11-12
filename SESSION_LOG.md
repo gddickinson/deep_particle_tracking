@@ -27,3 +27,10 @@
 - Still open: DualBranch / Attentive models crash on any forward pass (DecoderBlock called without skip_channels)
   and their 8x super-resolution output is not mapped back to frame pixels; EmbeddingLoss needs >= 2 frames of
   embeddings, so with one output frame the tracking loss is 0 and embeddings are not trained.
+
+## 2026-11-12 (follow-up 2): Dual Branch and Attentive models
+- Fixed both crashing on every forward pass (DecoderBlock skip_channels), their super-resolution output
+  (upsample_factor ignored; loss and predictor now handle k x maps: max-pool for the loss, sub-pixel peaks mapped
+  to frame pixels), and Attentive decoding the central instead of the last frame. tests/test_models_dual_attentive.py.
+- Still open for George: EmbeddingLoss compares embeddings across frames but every model outputs one frame of
+  embeddings, so the tracking loss is 0 and embeddings are untrained (model output shape left unchanged).
