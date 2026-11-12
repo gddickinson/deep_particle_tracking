@@ -34,8 +34,8 @@ The application leverages the power of convolutional neural networks, particular
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/deep_particle_tracker.git
-   cd deep_particle_tracker
+   git clone https://github.com/gddickinson/deep_particle_tracking.git
+   cd deep_particle_tracking
    ```
 
 2. Install dependencies:
