@@ -733,16 +733,17 @@ class AttentiveParticleTracker(nn.Module):
             bottleneck_attn, bottleneck_attn, bottleneck_attn
         )
 
-        # Reshape back and take the central frame features with temporal context
+        # Reshape back and take the last frame's features with temporal context (the frame the predictor and
+        # CombinedLoss assign the output to; this used the central frame)
         bottleneck_attn = bottleneck_attn.reshape(b, hw, f, c)
-        central_idx = num_frames // 2
+        central_idx = num_frames - 1
         bottleneck_attn = bottleneck_attn[:, :, central_idx].reshape(b, h, w, c)
         bottleneck_attn = bottleneck_attn.permute(0, 3, 1, 2)  # (B, C, H, W)
 
         # Decoder with skip connections
         features = bottleneck_attn
         for i, decoder in enumerate(self.decoders):
-            # Use the skip connection from the central frame
+            # Use the skip connection from the last frame
             skip_idx = self.depth - i - 1
             central_skip = all_skips[skip_idx][central_idx]
             features = decoder(features, central_skip)

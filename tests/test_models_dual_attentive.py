@@ -67,3 +67,18 @@ def test_super_resolution_peaks_map_to_frame_pixels(tmp_path):
     out = pred.predict_sequence(np.random.default_rng(0).random((4, 16, 16)).astype(np.float32), link_particles=False)
     allpos = np.concatenate([p.reshape(-1, 2) for p in out['positions']])
     assert len(allpos) == 0 or (allpos.min() >= -0.5 and allpos.max() <= 15.5)
+
+
+@pytest.mark.parametrize('kind', ['dual', 'attentive'])
+def test_positions_decoded_for_the_last_frame(kind):
+    # ParticlePredictor and CombinedLoss treat the output as the window's last frame, so the position decoder must
+    # use the last frame's skip connections.
+    model = create_model(kind, **TINY[kind]).eval()
+    enc = model.shared_encoders[0] if kind == 'dual' else model.encoders[0]
+    dec = model.loc_decoders[-1] if kind == 'dual' else model.decoders[-1]
+    skips, used = [], []
+    enc.register_forward_hook(lambda m, a, out: skips.append(out[1]))
+    dec.register_forward_pre_hook(lambda m, a: used.append(a[1]))
+    with torch.no_grad():
+        model(torch.rand(1, 3, 1, 16, 16))
+    assert len(skips) == 3 and used[0] is skips[-1]
