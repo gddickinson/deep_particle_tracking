@@ -601,16 +601,14 @@ class CombinedLoss(nn.Module):
         if pred_pos.dim() == 4 and target_pos.dim() == 5:
             # Add frame dimension to prediction
             pred_pos = pred_pos.unsqueeze(1)
-            # Use only first frame for simplicity in this fix
-            if self.lambda_track == 0.0:  # If tracking loss is disabled
-                target_pos = target_pos[:, 0:1]  # Use only first frame
 
         # If pred_pos is (batch, frames, channels, height, width) but frame count differs
         if pred_pos.dim() == 5 and target_pos.dim() == 5 and pred_pos.size(1) != target_pos.size(1):
             # Adjust frame count
             if pred_pos.size(1) < target_pos.size(1):
-                # Use only available frames from target
-                target_pos = target_pos[:, :pred_pos.size(1)]
+                # The models predict the last frame(s) of the input sequence (decoder skips and ConvLSTM state
+                # come from the last frame), so compare with the last target frames (was the first)
+                target_pos = target_pos[:, -pred_pos.size(1):]
             else:
                 # Use only available frames from prediction
                 pred_pos = pred_pos[:, :target_pos.size(1)]
@@ -630,14 +628,14 @@ class CombinedLoss(nn.Module):
             if embeddings.dim() == 4 and track_ids.dim() == 5:
                 # Embeddings lack frame dimension - expand first
                 embeddings = embeddings.unsqueeze(1)
-                # Only use one frame since we don't have embedding sequence
-                track_ids = track_ids[:, 0:1]
+                # Only one frame of embeddings: the last input frame
+                track_ids = track_ids[:, -1:]
 
             # If embeddings and track_ids have different frame counts
             if embeddings.dim() == 5 and track_ids.dim() == 5 and embeddings.size(1) != track_ids.size(1):
                 # Adjust frame count
                 if embeddings.size(1) < track_ids.size(1):
-                    track_ids = track_ids[:, :embeddings.size(1)]
+                    track_ids = track_ids[:, -embeddings.size(1):]
                 else:
                     embeddings = embeddings[:, :track_ids.size(1)]
 
