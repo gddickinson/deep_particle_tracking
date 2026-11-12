@@ -3,3 +3,9 @@
 *.log
 /logs
 /results
+site/
+__pycache__/
+*.pyc
+# trained weights are never committed
+*.pth
+*.pt

@@ -1,0 +1,28 @@
+/* Deep Particle Tracker: fluorescent teal particles, orange detections, periwinkle tracks on the shared neon theme. */
+:root { --accent:#5cf2c8; --accent2:#ff8a3d; --accent3:#8fa2ff; --glow:rgba(92,242,200,.13); }
+button, .btn, .seg button.on { color:#03140f; }
+.mark { box-shadow:0 0 12px var(--accent), inset 0 0 0 4px var(--bg), inset 0 0 0 9px var(--accent2); }
+.sim { display:grid; grid-template-columns:310px minmax(0, 1fr); gap:20px; align-items:start; margin-top:14px; }
+.sim .controls { background:rgba(11,12,26,.92); border:1px solid var(--line); border-radius:6px; padding:6px 16px 16px; min-width:0; }
+.sim .controls h3:first-child { margin-top:12px; }
+.seg button { padding:6px 9px; font-size:12px; }
+.view canvas { width:100%; height:auto; display:block; background:#000; border:1px solid var(--line); border-radius:4px; image-rendering:pixelated; }
+.toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:4px 14px; margin:8px 0; }
+.toolbar button { margin:0; } .toolbar input[type=range] { flex:1; min-width:120px; width:auto; }
+label.inl { display:inline-flex; gap:6px; align-items:center; margin:0; color:var(--ink); }
+.key { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:2px; }
+.readout { font:12px var(--mono); background:rgba(3,5,10,.9); border:1px solid var(--line); border-radius:4px; padding:8px 10px; min-width:0; overflow-wrap:anywhere; }
+.readout div { display:flex; justify-content:space-between; gap:8px; } .readout b { color:var(--accent); font-weight:500; text-align:right; }
+.readout h3 { margin:8px 0 2px; font-size:11px; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-top:10px; }
+.chart svg { width:100%; height:auto; display:block; }
+.chart .ax { stroke:var(--line); } .chart text { fill:var(--mute); font:11px var(--mono); }
+.chart .lbl { fill:var(--ink); }
+.legend { display:flex; flex-wrap:wrap; gap:4px 14px; font:12px var(--mono); color:var(--mute); }
+.legend i { display:inline-block; width:14px; height:3px; vertical-align:middle; margin-right:5px; }
+.badge { display:inline-block; font:11px var(--mono); padding:2px 8px; border-radius:3px; border:1px solid var(--accent2); color:var(--accent2); }
+.flow { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; counter-reset:step; }
+.flow .card { position:relative; } .flow .card::before { counter-increment:step; content:counter(step); position:absolute; right:10px; top:8px; font:600 20px var(--mono); color:var(--line); }
+td.num, th.num { text-align:right; font-family:var(--mono); }
+code { overflow-wrap:anywhere; }
+@media (max-width:860px) { .sim { grid-template-columns:1fr; } }

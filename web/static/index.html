@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deep Particle Tracker</title>
+<meta name="description" content="Simulate fluorescent-particle microscopy movies in the browser and explore how SNR and density affect detection and tracking. A Python app for deep learning-based particle tracking.">
+<link rel="icon" href="static/icon.svg">
+<link rel="stylesheet" href="static/style.css">
+<link rel="stylesheet" href="static/style_app.css">
+</head>
+<body>
+<canvas id="bg" aria-hidden="true"></canvas>
+<header class="top">
+  <a class="brand" href="#/"><span class="mark"></span>Deep Particle Tracker</a>
+  <nav class="groups">
+    <a href="#/simulate" data-nav="simulate">Simulator</a>
+    <a href="#/benchmark" data-nav="benchmark">Benchmark</a>
+    <a href="#/method" data-nav="method">Method</a>
+    <a href="#/model" data-nav="model">Trained model</a>
+    <a href="#/about" data-nav="about">About</a>
+  </nav>
+  <div class="right"><a class="small mute" href="https://github.com/gddickinson/deep_particle_tracking" target="_blank" rel="noopener">GitHub</a></div>
+</header>
+<main id="app" tabindex="-1"></main>
+<footer class="foot">Deep Particle Tracker · <a href="https://github.com/gddickinson/deep_particle_tracking">source on GitHub</a> · <span id="mode"></span></footer>
+<script type="module" src="static/main.js"></script>
+</body>
+</html>

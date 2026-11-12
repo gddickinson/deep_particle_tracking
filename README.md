@@ -116,6 +116,32 @@ The software is organized into several modules:
 5. Click "Run Prediction" to analyze
 6. Explore the results with the interactive viewer
 
+## Web interface
+
+A browser interface and a static site (GitHub Pages: https://gddickinson.github.io/deep_particle_tracking/).
+
+- **Simulator**: the Simulation tab's movie generator (`simulator/movie.py`) ported to JavaScript. A seed gives the
+  same movie as `simulate_movie(seed=...)` in Python (checked pixel by pixel). Change SNR, density, motion, PSF,
+  noise and blinking and see how a tracker copes.
+- **Benchmark**: detection F1 and tracking MOTA over SNR and particle density, computed by the Python code.
+- **Method**: simulation, networks, losses, detection, linking and metrics, read from the source.
+- **Trained model** (local app only): run a checkpoint you trained with the desktop app against the baseline.
+
+No trained weights are included in the repository, so the site's results come from a **classical baseline**
+(`prediction/classical.py`: Gaussian matched filter, the repo's peak detection and Hungarian linker), labelled as
+such. Models are never trained by the web app or in CI.
+
+```
+pip install -r requirements-web.txt
+python run_web.py          # http://127.0.0.1:8201
+python -m pytest -q tests  # includes the web tests
+node web/static/engine.test.mjs
+```
+
+![Home](docs/img/home.png)
+![Simulator](docs/img/simulate.png)
+![Benchmark](docs/img/benchmark.png)
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
