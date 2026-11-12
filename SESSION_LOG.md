@@ -14,3 +14,16 @@
   sweeps), Method (read from source with ast), Trained model (local only, PyTorch + your checkpoint), About.
 - Open questions for George: see reports (SNR setting semantics, predictor single-frame inference, embeddings unused,
   16-bit input normalisation).
+
+## 2026-11-12 (follow-up): SNR, sequences, embeddings, 16-bit input
+- One SNR definition (`simulator/movie.py` noise_levels): peak signal (intensity 1) above background / noise SD at
+  the background; Poisson: sqrt(background + read noise^2) photons. Simulator, GUI and SimulatedParticleDataset use
+  it; measured SNR matches the setting at 1, 3, 10 (Poisson + Gaussian capped at 100/3 by 3 counts of read noise).
+  Background Level widget removed. JS simulator and fixtures regenerated; benchmark recomputed.
+- Predictor feeds sliding windows of the trained length (ConvLSTM sees T > 1); embeddings returned by the simple
+  model and used for linking (embedding distance + position gate); 16-bit input normalised by percentiles.
+- Found while testing: the simple model output logits into BCE (training crashed on step 1) -> sigmoid; the loss
+  compared predictions (last frame) with the first target frame -> last frame.
+- Still open: DualBranch / Attentive models crash on any forward pass (DecoderBlock called without skip_channels)
+  and their 8x super-resolution output is not mapped back to frame pixels; EmbeddingLoss needs >= 2 frames of
+  embeddings, so with one output frame the tracking loss is 0 and embeddings are not trained.
