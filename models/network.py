@@ -467,14 +467,19 @@ class DualBranchParticleTracker(nn.Module):
         # Localization branch (super-resolution)
         self.loc_decoders = nn.ModuleList()
 
+        # Decoder for level i upsamples the current features and concatenates the level-i skip connection
+        # (base_filters * 2**i channels); DecoderBlock needs skip_channels explicitly (passing use_batch_norm in
+        # its place made every forward pass fail with a channel mismatch)
+        dec_in = curr_channels
         for i in range(depth - 1, -1, -1):
-            in_channels = base_filters * (2 ** i) * 2  # Double because of skip connection
             out_channels = base_filters * (2 ** max(0, i - 1))
 
             if i == 0:
                 out_channels = base_filters
 
-            self.loc_decoders.append(DecoderBlock(in_channels, out_channels, use_batch_norm))
+            self.loc_decoders.append(DecoderBlock(dec_in, out_channels, skip_channels=base_filters * (2 ** i),
+                                             use_batch_norm=use_batch_norm))
+            dec_in = out_channels
 
         # Final super-resolution upsampling for localization
         self.loc_upsampler = nn.Sequential(
@@ -494,14 +499,19 @@ class DualBranchParticleTracker(nn.Module):
         # Association branch (tracking)
         self.assoc_decoders = nn.ModuleList()
 
+        # Decoder for level i upsamples the current features and concatenates the level-i skip connection
+        # (base_filters * 2**i channels); DecoderBlock needs skip_channels explicitly (passing use_batch_norm in
+        # its place made every forward pass fail with a channel mismatch)
+        dec_in = curr_channels
         for i in range(depth - 1, -1, -1):
-            in_channels = base_filters * (2 ** i) * 2  # Double because of skip connection
             out_channels = base_filters * (2 ** max(0, i - 1))
 
             if i == 0:
                 out_channels = base_filters
 
-            self.assoc_decoders.append(DecoderBlock(in_channels, out_channels, use_batch_norm))
+            self.assoc_decoders.append(DecoderBlock(dec_in, out_channels, skip_channels=base_filters * (2 ** i),
+                                             use_batch_norm=use_batch_norm))
+            dec_in = out_channels
 
         # Final convolution for association map
         self.assoc_final = nn.Sequential(
@@ -639,14 +649,19 @@ class AttentiveParticleTracker(nn.Module):
         # Decoder blocks
         self.decoders = nn.ModuleList()
 
+        # Decoder for level i upsamples the current features and concatenates the level-i skip connection
+        # (base_filters * 2**i channels); DecoderBlock needs skip_channels explicitly (passing use_batch_norm in
+        # its place made every forward pass fail with a channel mismatch)
+        dec_in = curr_channels
         for i in range(depth - 1, -1, -1):
-            in_channels = base_filters * (2 ** i) * 2  # Double because of skip connection
             out_channels = base_filters * (2 ** max(0, i - 1))
 
             if i == 0:
                 out_channels = base_filters
 
-            self.decoders.append(DecoderBlock(in_channels, out_channels, use_batch_norm))
+            self.decoders.append(DecoderBlock(dec_in, out_channels, skip_channels=base_filters * (2 ** i),
+                                             use_batch_norm=use_batch_norm))
+            dec_in = out_channels
 
         # Position prediction branch
         self.position_upsampler = nn.Sequential(
@@ -676,7 +691,7 @@ class AttentiveParticleTracker(nn.Module):
     def reshape_from_attention(self, x, h, w):
         """Reshape from sequence back to spatial dimensions."""
         b, hw, c = x.shape
-        return x.permute(0, 2, 0, 1).reshape(b, c, h, w)
+        return x.permute(0, 2, 1).reshape(b, c, h, w)
 
     def forward(self, x):
         """
