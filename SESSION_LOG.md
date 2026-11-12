@@ -34,3 +34,18 @@
   to frame pixels), and Attentive decoding the central instead of the last frame. tests/test_models_dual_attentive.py.
 - Still open for George: EmbeddingLoss compares embeddings across frames but every model outputs one frame of
   embeddings, so the tracking loss is 0 and embeddings are untrained (model output shape left unchanged).
+
+## 2026-11-12 (follow-up 3): embeddings trained; over-budget files split
+- Refactor (no behaviour change): models/network.py (779 lines) -> blocks.py + tracker_simple/dual/attentive.py;
+  models/losses.py (810) -> loss_localization/embedding/matching.py + CombinedLoss; prediction/inference.py (510) ->
+  predictor.py + manager.py. Old modules re-export everything; seeded outputs, losses and state_dict keys identical.
+  web/method_info.py follows the re-exports (same /api/method content).
+- Fixed: embeddings were never trained (one embedding frame -> EmbeddingLoss had no frame pairs -> 0). All three
+  models decode every input frame (decode_frames, frames folded into the batch) and return embeddings
+  (B, T, E, H, W); positions unchanged (last frame; identical in eval mode). CombinedLoss pairs them by the
+  simulator's track_ids. The predictor links t-1 -> t with both frames' embeddings from the window ending at t.
+  tests/test_embedding_training.py: loss > 0 with gradients at the embedding head (all models); seeded 200-step CPU
+  run: held-out same-ID pairs become clearly closer than different-ID pairs; Trainer epoch runs for all models.
+- For George: the tracking term (lambda_track 0.5) was 0 until now and starts ~10-60x the localisation loss on an
+  untrained model; its weight may want tuning once real training runs are made.
+
