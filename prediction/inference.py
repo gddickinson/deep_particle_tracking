@@ -12,6 +12,7 @@ from scipy.spatial.distance import cdist
 
 from models.network import create_model
 from prediction.postprocess import detect_peaks, link_particles
+from prediction.preprocess import normalize_intensity
 from utils.device_manager import device_manager
 from utils.thread_manager import thread_manager
 
@@ -204,27 +205,11 @@ class ParticlePredictor:
         return result
 
     def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Preprocess a frame for input to the model.
-
-        Args:
-            frame: Input frame
-
-        Returns:
-            Preprocessed frame
-        """
-        # Ensure frame is 2D
+        """2D float32 frame in [0, 1] (first channel if RGB), scaled by prediction/preprocess.py
+        normalize_intensity (8-bit: /255; 16-bit and other ranges: percentiles; [0, 1] floats unchanged)."""
         if frame.ndim > 2:
             frame = frame[..., 0]  # Take first channel if RGB
-
-        # Convert to float32
-        frame = frame.astype(np.float32)
-
-        # Normalize to [0, 1]
-        if frame.max() > 1.0:
-            frame = frame / 255.0
-
-        return frame
+        return normalize_intensity(frame)
 
     def _postprocess_detection(self, prob_map: np.ndarray) -> np.ndarray:
         """Threshold + local-maximum detection (prediction/postprocess.py detect_peaks)."""

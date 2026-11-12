@@ -40,6 +40,7 @@ from simulator.motion_models import BrownianMotion, DirectedMotion, ConfinedDiff
 from training.data_loader import create_dataloaders, SimulatedParticleDataset
 from training.trainer import TrainingManager, thread_manager
 from prediction.inference import PredictionManager
+from prediction.preprocess import normalize_intensity
 from visualization.visualization import (
     ParticleVisualization, TrackingAnimator, TrackingVisualizer,
     TrainingProgressVisualization, MatplotlibCanvas
@@ -2132,9 +2133,8 @@ class PredictionTab(QWidget):
             except Exception:
                 raise ValueError(f"Unsupported file format: {ext}")
 
-        # Normalize frames to [0, 1]
-        if self.frames.max() > 1.0:
-            self.frames = self.frames.astype(np.float32) / 255.0
+        # Normalize frames to [0, 1] with one scale for the whole stack (8-bit: /255; 16-bit: percentiles)
+        self.frames = normalize_intensity(self.frames)
 
         # Update frame slider
         self.frame_slider.setMaximum(len(self.frames) - 1)
