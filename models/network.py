@@ -407,7 +407,8 @@ class ParticleTrackerModel(nn.Module):
             features = decoder(features, skip_features)
 
         # Position map and per-pixel embeddings for the last frame of the input sequence
-        positions = self.final_conv(features)
+        # Sigmoid: a probability map, as FocalLoss (binary cross-entropy) and the predictor's threshold expect
+        positions = torch.sigmoid(self.final_conv(features))
         embeddings = self.embedding_conv(features)
 
         # Input has a frame dimension, so the outputs get one too: (batch, 1, channels, height, width)
